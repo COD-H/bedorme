@@ -385,10 +385,19 @@ async def admin_user_paid_callback(update: Update, context: ContextTypes.DEFAULT
     except Exception:
         pass
 
-# Enable logging
+# 1. Standard setup: Show INFO for your own code
+#logging only shows WARNING and above by default, so we set it to INFO
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
+
+# 2. SILENCE the "HTTP Request: POST... 200 OK" noise
+# We set these to WARNING or ERROR so they don't show routine successful polls
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 
 # STATES
 # Add REG_GENDER between REG_BLOCK and REG_DORM to support GC Building flow
@@ -454,7 +463,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Please enter your Full Name (use the name on your ID):"
     )
     return REG_NAME
-
 
 async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
@@ -624,7 +632,9 @@ async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return REG_BLOCK
 
     context.user_data['dorm'] = text
-    await update.message.reply_text("Finally, enter your Phone Number:")
+    # Reset attempts here so they always get 5 fresh tries
+    context.user_data['phone_attempts'] = 0 
+    await update.message.reply_text("Finally, enter your Phone Number (starting with 09, 07, +2519, or +2517):")
     return REG_PHONE
 
 
