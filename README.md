@@ -1,3 +1,29 @@
+# Requirements
+
+To run the BeDormeDelivery server, you need:
+
+- **Python Version:** Python 3.8 or higher
+- **Python Packages:**
+	- python-telegram-bot
+	- python-dotenv
+	- asyncio (included in Python 3.4+)
+	- sqlite3 (included in Python standard library)
+
+You can install the required packages using:
+```bash
+pip install -r requirements.txt
+```
+
+**requirements.txt example:**
+```
+python-telegram-bot>=20.0
+python-dotenv>=1.0
+```
+
+- **Other Requirements:**
+	- A Telegram Bot Token (set in a .env file)
+	- Internet connection for Telegram API
+
 # BeDormeDelivery
 its a python code for a telegram bot for food delivery 
 
