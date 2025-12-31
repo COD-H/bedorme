@@ -7,7 +7,7 @@ from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
 from menus import MENUS
 from database import init_db, add_user, create_order, get_user
 from database import get_order
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from dotenv import load_dotenv
@@ -159,14 +159,15 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         order = get_order(order_id)
         user = get_user(user_id)
         
+        from html import escape
         caption = (
-            f"✅ **Order #{order_id} COMPLETED**\n"
-            f"👤 **User:** {user[1]} (ID: {user[2]})\n"
-            f"📞 **Phone:** {user[5]}\n"
-            f"🏠 **Dorm:** {user[3]} / {user[4]}\n"
-            f"📍 **Restaurant:** {order[3]}\n"
-            f"🍔 **Item:** {order[4]}\n"
-            f"💰 **Price:** {order[5]} ETB"
+            f"✅ <b>Order #{order_id} COMPLETED</b>\n"
+            f"👤 <b>User:</b> {escape(str(user[1]))} (ID: {user[2]})\n"
+            f"📞 <b>Phone:</b> {escape(str(user[5]))}\n"
+            f"🏠 <b>Dorm:</b> {escape(str(user[3]))} / {escape(str(user[4]))}\n"
+            f"📍 <b>Restaurant:</b> {escape(str(order[3]))}\n"
+            f"🍔 <b>Item:</b> {escape(str(order[4]))}\n"
+            f"💰 <b>Price:</b> {order[5]} ETB"
         )
 
         # Send to Completed Channel
@@ -175,16 +176,16 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_photo(
                 chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
                 photo=user_proof_id,
-                caption=f"{caption}\n\n📤 **Proof from User**",
-                parse_mode='Markdown'
+                caption=f"{caption}\n\n📤 <b>Proof from User</b>",
+                parse_mode='HTML'
             )
         
         # Send Admin Receipt
         await context.bot.send_photo(
             chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
             photo=file_id,
-            caption=f"{caption}\n\n🧾 **Receipt from Admin**",
-            parse_mode='Markdown'
+            caption=f"{caption}\n\n🧾 <b>Receipt from Admin</b>",
+            parse_mode='HTML'
         )
         
         # Cleanup
@@ -1576,6 +1577,52 @@ async def clear_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("You are not authorized to use this command.")
 
 
+async def restart_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data == "restart_reset":
+        # Clear all data
+        context.application.user_data.clear()
+        context.application.chat_data.clear()
+        context.application.bot_data.clear()
+        
+        # Re-initialize default bot_data structures
+        context.bot_data.setdefault('tracking_relays', {})
+        context.bot_data.setdefault('admin_live', {})
+        context.bot_data.setdefault('admin_orders', {})
+        context.bot_data.setdefault('order_locked', {})
+        
+        # Force flush to persistence
+        await context.application.persistence.flush()
+        
+        await query.edit_message_text("✅ System reset. All data cleared. Ready for new orders.")
+        
+    elif data == "restart_resume":
+        await query.edit_message_text("▶️ System resumed. Previous state restored.")
+
+
+async def post_init(application: Application):
+    # Check if we have resumed state (bot_data is not empty)
+    # We check specific keys that indicate active state
+    if application.bot_data.get('admin_orders') or application.bot_data.get('admin_live'):
+        # Send message to admin
+        keyboard = [
+            [InlineKeyboardButton("Intentional (Reset Data)", callback_data="restart_reset")],
+            [InlineKeyboardButton("Unintentional (Resume)", callback_data="restart_resume")]
+        ]
+        try:
+            await application.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text="⚠️ **Server Restart Detected** ⚠️\n\nWas this restart intentional?\n\n• **Intentional:** Clears all active orders and user states.\n• **Unintentional:** Resumes all active orders where they left off.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logging.error(f"Failed to send restart prompt: {e}")
+
+
 def main():
     # Handler for admin requesting updated user location
     async def admin_request_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1610,7 +1657,11 @@ def main():
             await query.edit_message_text("No location available for this user yet.")
 
     request = HTTPXRequest(connect_timeout=60, read_timeout=60)
-    application = Application.builder().token(TOKEN).request(request).build()
+    persistence = PicklePersistence(filepath='bot_data.pickle')
+    application = Application.builder().token(TOKEN).request(request).persistence(persistence).post_init(post_init).build()
+    
+    # Handler for restart decision
+    application.add_handler(CallbackQueryHandler(restart_decision_callback, pattern='^restart_'))
     # Handler for admin requesting updated user location
     application.add_handler(CallbackQueryHandler(
         admin_request_location_callback, pattern='^admin_request_location_'))
