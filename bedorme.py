@@ -2,6 +2,7 @@
 
 import time
 import math
+import asyncio
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
 from menus import MENUS
 from database import init_db, add_user, create_order, get_user
@@ -59,6 +60,9 @@ async def handle_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYP
     photo = update.message.photo[-1]
     file_id = photo.file_id
     
+    # Store user proof for later completion logging
+    context.bot_data[f'user_proof_{order_id}'] = file_id
+
     # Forward proof to admin
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📸 Payment proof received from User {user_id} for Order #{order_id}:")
     await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=file_id)
@@ -147,17 +151,69 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         from database import mark_order_complete, get_order, get_user
         mark_order_complete(order_id)
-        # Store proofs in DB if needed (requires DB schema update, skipping for now or storing file_ids if column exists)
-        # The requirement says "uploaded of payment photos are transfered to the db chat id once as proof and kept there"
-        # We'll send to DB Group.
         
-        # Send User Proof (we don't have the file_id here easily unless we stored it, 
-        # but we can just send the Admin's receipt and log the completion)
-        # Ideally we should have stored the user's proof file_id too.
+        # Retrieve User Proof
+        user_proof_id = context.bot_data.get(f'user_proof_{order_id}')
         
-        await context.bot.send_message(chat_id=COMPLETED_ORDERS_CHANNEL_ID, text=f"Order #{order_id} COMPLETED. Receipt attached.")
-        await context.bot.send_photo(chat_id=COMPLETED_ORDERS_CHANNEL_ID, photo=file_id)
+        # Get Order Details
+        order = get_order(order_id)
+        user = get_user(user_id)
         
+        caption = (
+            f"✅ **Order #{order_id} COMPLETED**\n"
+            f"👤 **User:** {user[1]} (ID: {user[2]})\n"
+            f"📞 **Phone:** {user[5]}\n"
+            f"🏠 **Dorm:** {user[3]} / {user[4]}\n"
+            f"📍 **Restaurant:** {order[3]}\n"
+            f"🍔 **Item:** {order[4]}\n"
+            f"💰 **Price:** {order[5]} ETB"
+        )
+
+        # Send to Completed Channel
+        # Send User Proof
+        if user_proof_id:
+            await context.bot.send_photo(
+                chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
+                photo=user_proof_id,
+                caption=f"{caption}\n\n📤 **Proof from User**",
+                parse_mode='Markdown'
+            )
+        
+        # Send Admin Receipt
+        await context.bot.send_photo(
+            chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
+            photo=file_id,
+            caption=f"{caption}\n\n🧾 **Receipt from Admin**",
+            parse_mode='Markdown'
+        )
+        
+        # Cleanup
+        if user_proof_id:
+            del context.bot_data[f'user_proof_{order_id}']
+        
+    except Exception as e:
+        logger.error(f"FAILED TO SEND TO COMPLETED CHANNEL: {e}")
+        # Try sending error to admin chat so they know
+        try:
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"⚠️ Error logging completion to channel: {e}")
+        except:
+            pass
+
+    # 2.5. Ask User to Stop Live Location
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "🛑 **Please Stop Sharing Your Live Location**\n\n"
+                "To protect your privacy and save battery:\n"
+                "1. Tap the 'Stop Sharing Location' bar at the top of this chat.\n"
+                "   OR\n"
+                "2. Tap the map in the chat and select 'Stop Sharing'."
+            ),
+            parse_mode='Markdown'
+        )
+        # Wait 5 seconds
+        await asyncio.sleep(5)
     except Exception:
         pass
 
@@ -183,24 +239,44 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
 
     # 4. Cleanup
-    del context.bot_data[f'admin_uploading_receipt_{admin_id}']
-    await update.message.reply_text(f"Receipt sent to user. Order #{order_id} marked as complete.")
+    # del context.bot_data[f'admin_uploading_receipt_{admin_id}'] # No longer needed with reply logic
+    await msg.reply_text(f"Receipt sent to user. Order #{order_id} marked as complete.")
     
     # Clean up other order data
     try:
+        logger.info(f"Cleaning up data for completed order #{order_id}")
+        
+        # 1. Remove from admin_orders (Stops Admin->User relay)
         admin_orders = context.bot_data.get('admin_orders', {})
-        if order_id in admin_orders: del admin_orders[order_id]
+        if order_id in admin_orders: 
+            del admin_orders[order_id]
+            logger.info(f"Removed order {order_id} from admin_orders")
+
+        # 2. Remove from admin_live (Stops User->Admin relay)
+        admin_live = context.bot_data.get('admin_live', {})
+        # admin_live is keyed by user_id
+        if user_id in admin_live:
+            del admin_live[user_id]
+            logger.info(f"Removed user {user_id} from admin_live")
+        # Fallback: search by order_id if user_id key missing or different
+        for k in list(admin_live.keys()):
+            if admin_live[k].get('order_id') == order_id: 
+                del admin_live[k]
+
+        # 3. Remove from tracking_relays (Stops Admin->User relay mapping)
+        relays = context.bot_data.get('tracking_relays', {})
+        # relays is keyed by admin_id
+        for k in list(relays.keys()):
+            if relays[k].get('order_id') == order_id: 
+                del relays[k]
+                logger.info(f"Removed relay for admin {k}")
+
+        # 4. Remove locks
         order_locked = context.bot_data.get('order_locked', {})
         if order_id in order_locked: del order_locked[order_id]
-        # Remove live location relay
-        relays = context.bot_data.get('tracking_relays', {})
-        for k in list(relays.keys()):
-            if relays[k].get('order_id') == order_id: del relays[k]
-        admin_live = context.bot_data.get('admin_live', {})
-        for k in list(admin_live.keys()):
-            if admin_live[k].get('order_id') == order_id: del admin_live[k]
-    except Exception:
-        pass
+        
+    except Exception as e:
+        logger.error(f"Error during cleanup for order {order_id}: {e}")
 
 
 async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1106,23 +1182,37 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                 order = get_order(order_id)
                 if order:
                     user_id = order[1]  # customer_id
-                    # Delete last location message if exists
+                    # Relay location to user
                     relay_key = f"relay_{user_id}_{order_id}"
                     last_msg_id = context.bot_data.get(relay_key)
+                    
+                    sent = None
                     if last_msg_id:
                         try:
-                            await context.bot.delete_message(chat_id=user_id, message_id=last_msg_id)
-                        except Exception:
-                            pass
-                    # Relay location to user
-                    sent = await context.bot.send_location(
-                        chat_id=user_id,
-                        latitude=lat,
-                        longitude=lon,
-                        live_period=3600
-                    )
-                    # Store the new message id
-                    context.bot_data[relay_key] = sent.message_id
+                            await context.bot.edit_message_live_location(
+                                chat_id=user_id,
+                                message_id=last_msg_id,
+                                latitude=lat,
+                                longitude=lon
+                            )
+                        except Exception as e:
+                            # If edit fails (e.g. message deleted or live period expired), send new one
+                            print(f"DEBUG: Failed to edit live location for user {user_id}: {e}")
+                            last_msg_id = None # Force new send
+                    
+                    if not last_msg_id:
+                        try:
+                            sent = await context.bot.send_location(
+                                chat_id=user_id,
+                                latitude=lat,
+                                longitude=lon,
+                                live_period=3600
+                            )
+                            # Store the new message id
+                            context.bot_data[relay_key] = sent.message_id
+                        except Exception as e:
+                            logger.warning(f"Failed to send live location to user: {e}")
+
                     # Now check if within 50m
                     user = get_user(user_id)
                     user_lat = order[11]  # delivery_lat
