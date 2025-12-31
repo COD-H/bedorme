@@ -160,15 +160,28 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         user = get_user(user_id)
         
         from html import escape
+        # Escape ALL fields to prevent HTML parse errors
+        user_name = escape(str(user[1])) if user[1] else "Unknown"
+        user_id_display = escape(str(user[2])) if user[2] else "Unknown"
+        user_phone = escape(str(user[5])) if user[5] else "Unknown"
+        user_block = escape(str(user[3])) if user[3] else "?"
+        user_dorm = escape(str(user[4])) if user[4] else "?"
+        rest_name = escape(str(order[3])) if order[3] else "?"
+        item_name = escape(str(order[4])) if order[4] else "?"
+        price_display = escape(str(order[5])) if order[5] else "0"
+
         caption = (
             f"✅ <b>Order #{order_id} COMPLETED</b>\n"
-            f"👤 <b>User:</b> {escape(str(user[1]))} (ID: {user[2]})\n"
-            f"📞 <b>Phone:</b> {escape(str(user[5]))}\n"
-            f"🏠 <b>Dorm:</b> {escape(str(user[3]))} / {escape(str(user[4]))}\n"
-            f"📍 <b>Restaurant:</b> {escape(str(order[3]))}\n"
-            f"🍔 <b>Item:</b> {escape(str(order[4]))}\n"
-            f"💰 <b>Price:</b> {order[5]} ETB"
+            f"👤 <b>User:</b> {user_name} (ID: {user_id_display})\n"
+            f"📞 <b>Phone:</b> {user_phone}\n"
+            f"🏠 <b>Dorm:</b> {user_block} / {user_dorm}\n"
+            f"📍 <b>Restaurant:</b> {rest_name}\n"
+            f"🍔 <b>Item:</b> {item_name}\n"
+            f"💰 <b>Price:</b> {price_display} ETB"
         )
+        
+        # Log the caption for debugging
+        logger.info(f"Generated Caption: {caption}")
 
         # Send to Completed Channel
         # Send User Proof
