@@ -16,6 +16,9 @@ import re
 import random
 import os
 import logging
+import sqlite3
+
+
 
 
 async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -454,6 +457,8 @@ if not COMPLETED_ORDERS_CHANNEL_ID:
     COMPLETED_ORDERS_CHANNEL_ID = -1003306702660
 
 
+
+
 # --- Registration Flow ---
 
 
@@ -500,10 +505,22 @@ async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [['Back']], one_time_keyboard=True, resize_keyboard=True)
     )
     return REG_ID
-
-
 async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sid = update.message.text.strip()
+
+    # --- NEW PARAMETER CHECK: BLOCK COMMANDS ---
+    # We use a tuple ('/', '\\') to catch both forward and backslashes
+    if sid.startswith(('/', '\\')):
+        await update.message.reply_text(
+            "❌ **Invalid Input**\n\n"
+            "Please follow the registration step to order! Use /start to begin.\n"
+            "Now, please enter your **Student ID** to continue:",
+            parse_mode='Markdown'
+        )
+        return REG_ID
+
+
+    # --- YOUR ORIGINAL STRUCTURE START ---
     # Handle 'Back' to edit the name
     if sid.lower() == 'back':
         await update.message.reply_text(
@@ -512,13 +529,14 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [['Back']], one_time_keyboard=True, resize_keyboard=True)
         )
         return REG_NAME
-    # Accept formats like: nsr/1234/16  or  EX-123-18  (prefix nsr|ex, 3-4 digits, year 14-18)
+
+    # Accept formats like: nsr/1234/16  or  EX-123-18
     pattern = r'^(nsr|ex)[/\-_.](\d{3,4})[/\-_.](\d{2})$'
     m = re.match(pattern, sid, flags=re.I)
     if not m:
         await update.message.reply_text(
             "Invalid Student ID format. Use one of:\n"
-            "  nsr/1234/16   (or)   EX-123-18\n"
+            "   nsr/1234/16   (or)   EX-123-18\n"
             "Prefix must be 'nsr' or 'ex', middle 3–4 digits, last two digits between 14 and 18.\n"
             "Please enter your Student ID:"
         )
@@ -542,12 +560,11 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("The last two digits must be between 14 and 18 inclusive. Please re-enter your Student ID:")
         return REG_ID
 
-    # Normalise and store (use '/' as canonical separator)
+    # Normalise and store
     context.user_data['student_id'] = f"{prefix.lower()}/{digits}/{yy}"
 
-    # Prepare block-selection keyboard: include special areas and some known blocks
+    # Prepare block-selection keyboard
     special = ['NEWYORK', 'Around GC Building']
-    # Use a subset of known BLOCKS keys for choices (if available)
     try:
         known = list(BLOCKS.keys())
     except Exception:
@@ -555,7 +572,6 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     keyboard.append(special)
-    # add up to 6 known blocks in two-column rows
     row = []
     for b in known[:6]:
         row.append(b)
@@ -564,7 +580,7 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
     if row:
         keyboard.append(row)
-    # always provide a Back option during registration steps
+    
     keyboard.append(['Back'])
 
     await update.message.reply_text(
@@ -573,7 +589,6 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
     return REG_BLOCK
-
 
 async def reg_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -748,21 +763,9 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del context.user_data['phone_attempts']
 
     # --- 5. TRIGGER ORDER PROMPT AUTOMATICALLY ---
-    await update.message.reply_text("✅ Registration Complete!")
+    await update.message.reply_text("✅ Registration Complete! u can now place your /order.")
     
-    # This shows the restaurant keyboard immediately
-    keyboard = [
-        ['Fle', 'Zebra'],
-        ['Wesen', 'Selam'],
-        ['Webete (Premium)', 'Darek (Premium)']
-    ]
-    await update.message.reply_text(
-        "You can now place your first order!\n\nChoose a restaurant:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    )
-    
-    # Jump to ORDER_REST state so the bot listens for the restaurant choice
-    return ORDER_REST
+    return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -770,9 +773,36 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # --- Order Flow ---
-
+def is_user_registered(user_id):
+    # Connect to your database (ensure the name 'bedorme.db' matches your file)
+    conn = sqlite3.connect('bedorme.db')
+    cursor = conn.cursor()
+    
+    # Check if the user_id exists in the users table
+    cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    conn.close()
+    
+    # Returns True if user exists, False otherwise
+    return user is not None
 
 async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # --- 1. THE REGISTRATION GUARD (MUST BE FIRST) ---
+    # We check the database BEFORE showing any restaurant buttons
+    if not is_user_registered(user_id):
+        await update.message.reply_text(
+            "❌ **Access Denied**\n\n"
+            "Please follow the registration step to order! You must be registered first.\n"
+            "Type /start to begin your registration.",
+            parse_mode='Markdown'
+        )
+        # We return END so the ordering process doesn't even start
+        return ConversationHandler.END
+
+    # --- 2. YOUR ORIGINAL STRUCTURE (ONLY RUNS IF REGISTERED) ---
     keyboard = [
         ['Fle', 'Zebra'],
         ['Wesen', 'Selam'],
@@ -780,10 +810,9 @@ async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(
         "Choose a restaurant:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
     return ORDER_REST
-
 
 async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin taps 'Order Received' button in the admin group."""
@@ -929,9 +958,21 @@ async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ORDER_ITEM
 
-
 async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    
+    # --- PARAMETER CHECK: PREVENT CRASH & UNAUTHORIZED COMMANDS ---
+    if " - " not in text or text.startswith('/'):
+        await update.message.reply_text(
+            "⚠️ **Unauthorized Access**\n\n"
+            "Finish the process you started! Please select a food item "
+            "from the buttons provided.",
+            parse_mode='Markdown'
+        )
+        # Keep user in the current state so they must pick a valid item
+        return ORDER_ITEM
+
+    # --- YOUR ORIGINAL STRUCTURE (INTACT) ---
     item_name = text.split(" - ")[0]
     price = float(text.split(" - ")[1].replace(" ETB", ""))
 
@@ -945,21 +986,37 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ORDER_CONFIRM
 
-
 async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text != 'Confirm':
+    text = update.message.text.strip()
+
+    # 1. VALID: User clicks 'Confirm' -> Moves to Location Selection
+    if text == 'Confirm':
+        await update.message.reply_text(
+            "Where should we deliver?\n\n"
+            "1. **Dorm**: Uses your registered Block/Dorm.\n"
+            "2. **My Location**: Share your current location pin.",
+            reply_markup=ReplyKeyboardMarkup(
+                [['Dorm', 'My Location']], one_time_keyboard=True, resize_keyboard=True),
+            parse_mode='Markdown'
+        )
+        # This includes the transition you asked for
+        return ORDER_LOCATION
+
+    # 2. VALID: User clicks 'Cancel' -> Ends the conversation
+    elif text == 'Cancel':
         await update.message.reply_text("Order cancelled.", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
-    await update.message.reply_text(
-        "Where should we deliver?\n\n"
-        "1. **Dorm**: Uses your registered Block/Dorm.\n"
-        "2. **My Location**: Share your current location pin.",
-        reply_markup=ReplyKeyboardMarkup(
-            [['Dorm', 'My Location']], one_time_keyboard=True, resize_keyboard=True),
-        parse_mode='Markdown'
-    )
-    return ORDER_LOCATION
+    # 3. INVALID PARAMETER: User types anything else
+    else:
+        await update.message.reply_text(
+            "⚠️ Invalid input. Please use the buttons below to **Confirm** or **Cancel** your order.",
+            reply_markup=ReplyKeyboardMarkup(
+                [['Confirm', 'Cancel']], one_time_keyboard=True, resize_keyboard=True),
+            parse_mode='Markdown'
+        )
+        # This keeps the user in the same state to try again
+        return ORDER_CONFIRM
 
 
 async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
