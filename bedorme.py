@@ -693,19 +693,76 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    
+    # --- 1. HANDLE BACK BUTTON ---
     if text.lower() == 'back':
         await update.message.reply_text("Please re-enter your Dorm Number:", reply_markup=ReplyKeyboardMarkup([['Back']], one_time_keyboard=True, resize_keyboard=True))
         return REG_DORM
 
+    # --- 2. VALIDATION LOGIC ---
+    is_valid = False
+    error_msg = ""
+
+    # Rule: Starts with 09 or 07 -> Must be exactly 10 digits
+    if text.startswith(('09', '07')):
+        if text.isdigit() and len(text) == 10:
+            is_valid = True
+        else:
+            error_msg = "❌ Invalid: Numbers starting with 09 or 07 must be exactly 10 digits and contain no symbols."
+
+    # Rule: Starts with +2517 or +2519 -> Must be exactly 13 characters
+    elif text.startswith(('+2519', '+2517')):
+        if text[1:].isdigit() and len(text) == 13:
+            is_valid = True
+        else:
+            error_msg = "❌ Invalid: Numbers starting with +251 must be exactly 13 characters (e.g., +251912345678)."
+    
+    else:
+        error_msg = "❌ Invalid: Number must start with 09, 07, +2519, or +2517."
+
+    # --- 3. HANDLE 5-ATTEMPT LIMIT ---
+    if not is_valid:
+        attempts = context.user_data.get('phone_attempts', 0) + 1
+        context.user_data['phone_attempts'] = attempts
+        
+        if attempts >= 5:
+            # Wipe progress so they start fresh on next /start
+            context.user_data.clear()
+            await update.message.reply_text("⚠️ 5 invalid attempts. Registration has been reset.\nPlease type /start to try again.")
+            return ConversationHandler.END
+        
+        await update.message.reply_text(f"{error_msg}\n(Attempt {attempts}/5). Please try again:")
+        return REG_PHONE
+
+    # --- 4. SUCCESS PATH (EXISTING STRUCTURE) ---
     user_data = context.user_data
     user_data['phone'] = text
     user_id = update.effective_user.id
 
+    # Keeping your database call exactly as it was
     add_user(user_id, user_data['name'], user_data['student_id'],
              user_data['block'], user_data['dorm'], user_data['phone'])
 
-    await update.message.reply_text("Registration Complete! You can now use /order to buy food.")
-    return ConversationHandler.END
+    # Cleanup attempts counter
+    if 'phone_attempts' in context.user_data:
+        del context.user_data['phone_attempts']
+
+    # --- 5. TRIGGER ORDER PROMPT AUTOMATICALLY ---
+    await update.message.reply_text("✅ Registration Complete!")
+    
+    # This shows the restaurant keyboard immediately
+    keyboard = [
+        ['Fle', 'Zebra'],
+        ['Wesen', 'Selam'],
+        ['Webete (Premium)', 'Darek (Premium)']
+    ]
+    await update.message.reply_text(
+        "You can now place your first order!\n\nChoose a restaurant:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    
+    # Jump to ORDER_REST state so the bot listens for the restaurant choice
+    return ORDER_REST
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
