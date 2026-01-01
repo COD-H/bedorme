@@ -257,7 +257,10 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # 4. Cleanup
     # del context.bot_data[f'admin_uploading_receipt_{admin_id}'] # No longer needed with reply logic
-    await msg.reply_text(f"Receipt sent to user. Order #{order_id} marked as complete.")
+    await msg.reply_text(
+        f"Receipt sent to user. Order #{order_id} marked as complete.\n\n"
+        "🛑 **ATTENTION ADMIN:** Please **STOP SHARING YOUR LIVE LOCATION** now if you are still sharing it."
+    )
     
     # Clean up other order data
     try:
@@ -1873,8 +1876,8 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
 
-    application.add_handler(reg_conv)
     application.add_handler(order_conv)
+    application.add_handler(reg_conv)
     application.add_handler(dev_conv)
     # Add clearorders command for admin group only
     application.add_handler(CommandHandler('clearorders', clear_orders))

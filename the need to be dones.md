@@ -3,3 +3,14 @@
 # also need to edit the /clearorders button more prosisly 
 # fix the location problem it needs work
 # fix, the bot dosent collect info from the admin channel ... info like the admin location
+
+
+
+
+#i need to add an amharic version an ask user what language user prefers
+
+# on the admin side when orders pile up its hard to know wich orders are incomplite because the bot keeps updating the maps and the order gets barried under a lot of location updates
+
+# right after the order is complite i want the bot to delete the prompted messages from the user and have a clear page
+
+# user should be able to order multiple orders at once 
