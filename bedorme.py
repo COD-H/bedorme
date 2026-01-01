@@ -19,8 +19,6 @@ import logging
 import sqlite3
 
 
-
-
 async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin confirms they have seen the user (within 50m)."""
     query = update.callback_query
@@ -31,7 +29,7 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
         return
     order_id = int(parts[3])
     user_id = int(parts[4])
-    
+
     # Notify user to start payment process and upload proof
     await context.bot.send_message(
         chat_id=user_id,
@@ -39,7 +37,7 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
               "Only complete transferring after you have verified the package.\n\n"
               "📸 **Please upload a screenshot/photo of the payment proof here.**")
     )
-    
+
     # Set state for this user to expect payment proof
     context.bot_data[f'waiting_payment_proof_{user_id}'] = order_id
 
@@ -55,31 +53,32 @@ async def handle_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     user_id = update.effective_user.id
     order_id = context.bot_data.get(f'waiting_payment_proof_{user_id}')
-    
+
     if not order_id:
         # Not waiting for proof from this user
         return
 
     photo = update.message.photo[-1]
     file_id = photo.file_id
-    
+
     # Store user proof for later completion logging
     context.bot_data[f'user_proof_{order_id}'] = file_id
 
     # Forward proof to admin
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📸 Payment proof received from User {user_id} for Order #{order_id}:")
     await context.bot.send_photo(chat_id=ADMIN_CHAT_ID, photo=file_id)
-    
+
     # Ask admin to verify and upload their own proof (receipt)
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Verify & Upload Receipt", callback_data=f"admin_req_receipt_{order_id}_{user_id}")]
+        [InlineKeyboardButton("Verify & Upload Receipt",
+                              callback_data=f"admin_req_receipt_{order_id}_{user_id}")]
     ])
     await context.bot.send_message(
         chat_id=ADMIN_CHAT_ID,
         text="Verify the payment. If received, click below to upload your confirmation receipt.",
         reply_markup=kb
     )
-    
+
     # Clear user waiting state
     del context.bot_data[f'waiting_payment_proof_{user_id}']
     await update.message.reply_text("Payment proof sent! Waiting for admin verification.")
@@ -92,7 +91,7 @@ async def admin_req_receipt_callback(update: Update, context: ContextTypes.DEFAU
     parts = query.data.split("_")
     order_id = int(parts[3])
     user_id = int(parts[4])
-    
+
     # 1. Mark that verification is in progress
     await query.edit_message_text(f"Admin {query.from_user.first_name} is verifying payment.")
 
@@ -129,20 +128,20 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     match = re.search(r"Order #(\d+)", reply_text)
     if not match:
         return
-    
+
     order_id = int(match.group(1))
-    
+
     # Fetch order details from DB to get the user_id
     from database import get_order
     order = get_order(order_id)
     if not order:
         return
-    
-    user_id = order[1] # customer_id is at index 1
+
+    user_id = order[1]  # customer_id is at index 1
 
     photo = msg.photo[-1]
     file_id = photo.file_id
-    
+
     # 1. Forward receipt to user
     try:
         await context.bot.send_message(chat_id=user_id, text=f"✅ Payment Verified! Here is your receipt for Order #{order_id}:")
@@ -154,14 +153,14 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         from database import mark_order_complete, get_order, get_user
         mark_order_complete(order_id)
-        
+
         # Retrieve User Proof
         user_proof_id = context.bot_data.get(f'user_proof_{order_id}')
-        
+
         # Get Order Details
         order = get_order(order_id)
         user = get_user(user_id)
-        
+
         from html import escape
         # Escape ALL fields to prevent HTML parse errors
         user_name = escape(str(user[1])) if user[1] else "Unknown"
@@ -182,7 +181,7 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
             f"🍔 <b>Item:</b> {item_name}\n"
             f"💰 <b>Price:</b> {price_display} ETB"
         )
-        
+
         # Log the caption for debugging
         logger.info(f"Generated Caption: {caption}")
 
@@ -190,24 +189,24 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         # Send User Proof
         if user_proof_id:
             await context.bot.send_photo(
-                chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
+                chat_id=COMPLETED_ORDERS_CHANNEL_ID,
                 photo=user_proof_id,
                 caption=f"{caption}\n\n📤 <b>Proof from User</b>",
                 parse_mode='HTML'
             )
-        
+
         # Send Admin Receipt
         await context.bot.send_photo(
-            chat_id=COMPLETED_ORDERS_CHANNEL_ID, 
+            chat_id=COMPLETED_ORDERS_CHANNEL_ID,
             photo=file_id,
             caption=f"{caption}\n\n🧾 <b>Receipt from Admin</b>",
             parse_mode='HTML'
         )
-        
+
         # Cleanup
         if user_proof_id:
             del context.bot_data[f'user_proof_{order_id}']
-        
+
     except Exception as e:
         logger.error(f"FAILED TO SEND TO COMPLETED CHANNEL: {e}")
         # Try sending error to admin chat so they know
@@ -240,13 +239,14 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         buttons = []
         row = []
         for i in range(1, 11):
-            row.append(InlineKeyboardButton(str(i), callback_data=f"rate_{order_id}_{i}"))
+            row.append(InlineKeyboardButton(
+                str(i), callback_data=f"rate_{order_id}_{i}"))
             if len(row) == 5:
                 buttons.append(row)
                 row = []
         if row:
             buttons.append(row)
-            
+
         await context.bot.send_message(
             chat_id=user_id,
             text="How was your delivery experience? Please rate us from 1 (Worst) to 10 (Best):",
@@ -261,14 +261,29 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         f"Receipt sent to user. Order #{order_id} marked as complete.\n\n"
         "🛑 **ATTENTION ADMIN:** Please **STOP SHARING YOUR LIVE LOCATION** now if you are still sharing it."
     )
-    
-    # Clean up other order data
+
+    # --- NEW: Delete all messages in user's chat, then send /start prompt ---
+    try:
+        chat = await context.bot.get_chat(user_id)
+        async for message in context.bot.get_chat_history(user_id, limit=100):
+            try:
+                await context.bot.delete_message(chat_id=user_id, message_id=message.message_id)
+            except Exception:
+                pass
+        # After deleting, send a new /start prompt
+        await context.bot.send_message(
+            chat_id=user_id,
+            text='Click me: /start',
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.warning(f"Failed to clean up user chat after order completion: {e}")
+    # Only now, after all notifications, remove the relay so the user can see the admin's location until the very end
     try:
         logger.info(f"Cleaning up data for completed order #{order_id}")
-        
         # 1. Remove from admin_orders (Stops Admin->User relay)
         admin_orders = context.bot_data.get('admin_orders', {})
-        if order_id in admin_orders: 
+        if order_id in admin_orders:
             del admin_orders[order_id]
             logger.info(f"Removed order {order_id} from admin_orders")
 
@@ -280,21 +295,23 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.info(f"Removed user {user_id} from admin_live")
         # Fallback: search by order_id if user_id key missing or different
         for k in list(admin_live.keys()):
-            if admin_live[k].get('order_id') == order_id: 
+            if admin_live[k].get('order_id') == order_id:
                 del admin_live[k]
 
         # 3. Remove from tracking_relays (Stops Admin->User relay mapping)
+        # (This is the key part: only remove after all notifications are sent)
         relays = context.bot_data.get('tracking_relays', {})
         # relays is keyed by admin_id
         for k in list(relays.keys()):
-            if relays[k].get('order_id') == order_id: 
+            if relays[k].get('order_id') == order_id:
                 del relays[k]
                 logger.info(f"Removed relay for admin {k}")
 
         # 4. Remove locks
         order_locked = context.bot_data.get('order_locked', {})
-        if order_id in order_locked: del order_locked[order_id]
-        
+        if order_id in order_locked:
+            del order_locked[order_id]
+
     except Exception as e:
         logger.error(f"Error during cleanup for order {order_id}: {e}")
 
@@ -305,10 +322,10 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split("_")
     order_id = int(parts[1])
     rating = int(parts[2])
-    
+
     from database import save_rating
     save_rating(order_id, rating)
-    
+
     await query.edit_message_text(f"Thank you! You rated this order {rating}/10.")
 
 
@@ -392,9 +409,9 @@ async def admin_user_paid_callback(update: Update, context: ContextTypes.DEFAULT
         pass
 
 # 1. Standard setup: Show INFO for your own code
-#logging only shows WARNING and above by default, so we set it to INFO
+# logging only shows WARNING and above by default, so we set it to INFO
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
@@ -460,8 +477,6 @@ if not COMPLETED_ORDERS_CHANNEL_ID:
     COMPLETED_ORDERS_CHANNEL_ID = -1003306702660
 
 
-
-
 # --- Registration Flow ---
 
 
@@ -471,6 +486,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Please enter your Full Name (use the name on your ID):"
     )
     return REG_NAME
+
 
 async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
@@ -508,6 +524,8 @@ async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [['Back']], one_time_keyboard=True, resize_keyboard=True)
     )
     return REG_ID
+
+
 async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sid = update.message.text.strip()
 
@@ -521,7 +539,6 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
         return REG_ID
-
 
     # --- YOUR ORIGINAL STRUCTURE START ---
     # Handle 'Back' to edit the name
@@ -583,7 +600,7 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
     if row:
         keyboard.append(row)
-    
+
     keyboard.append(['Back'])
 
     await update.message.reply_text(
@@ -592,6 +609,7 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
     return REG_BLOCK
+
 
 async def reg_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -651,7 +669,7 @@ async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data['dorm'] = text
     # Reset attempts here so they always get 5 fresh tries
-    context.user_data['phone_attempts'] = 0 
+    context.user_data['phone_attempts'] = 0
     await update.message.reply_text("Finally, enter your Phone Number (starting with 09, 07, +2519, or +2517):")
     return REG_PHONE
 
@@ -711,7 +729,7 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    
+
     # --- 1. HANDLE BACK BUTTON ---
     if text.lower() == 'back':
         await update.message.reply_text("Please re-enter your Dorm Number:", reply_markup=ReplyKeyboardMarkup([['Back']], one_time_keyboard=True, resize_keyboard=True))
@@ -734,7 +752,7 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_valid = True
         else:
             error_msg = "❌ Invalid: Numbers starting with +251 must be exactly 13 characters (e.g., +251912345678)."
-    
+
     else:
         error_msg = "❌ Invalid: Number must start with 09, 07, +2519, or +2517."
 
@@ -742,13 +760,13 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_valid:
         attempts = context.user_data.get('phone_attempts', 0) + 1
         context.user_data['phone_attempts'] = attempts
-        
+
         if attempts >= 5:
             # Wipe progress so they start fresh on next /start
             context.user_data.clear()
             await update.message.reply_text("⚠️ 5 invalid attempts. Registration has been reset.\nPlease type /start to try again.")
             return ConversationHandler.END
-        
+
         await update.message.reply_text(f"{error_msg}\n(Attempt {attempts}/5). Please try again:")
         return REG_PHONE
 
@@ -767,7 +785,7 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- 5. TRIGGER ORDER PROMPT AUTOMATICALLY ---
     await update.message.reply_text("✅ Registration Complete! u can now place your /order.")
-    
+
     return ConversationHandler.END
 
 
@@ -776,23 +794,26 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # --- Order Flow ---
+
+
 def is_user_registered(user_id):
     # Connect to your database (ensure the name 'bedorme.db' matches your file)
     conn = sqlite3.connect('bedorme.db')
     cursor = conn.cursor()
-    
+
     # Check if the user_id exists in the users table
     cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
-    
+
     conn.close()
-    
+
     # Returns True if user exists, False otherwise
     return user is not None
 
+
 async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
+
     # --- 1. THE REGISTRATION GUARD (MUST BE FIRST) ---
     # We check the database BEFORE showing any restaurant buttons
     if not is_user_registered(user_id):
@@ -813,9 +834,11 @@ async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text(
         "Choose a restaurant:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
     return ORDER_REST
+
 
 async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin taps 'Order Received' button in the admin group."""
@@ -839,7 +862,8 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
                               callback_data=f"admin_request_location_{order_id}_{customer_id}")],
         [InlineKeyboardButton(
             "I'm about to pay", callback_data=f"about_to_pay_{order_id}_{customer_id}")],
-        [InlineKeyboardButton("⚠️ Force Arrival Notify", callback_data=f"force_arrival_{order_id}_{customer_id}")]
+        [InlineKeyboardButton("⚠️ Force Arrival Notify",
+                              callback_data=f"force_arrival_{order_id}_{customer_id}")]
     ])
     if admin_entry is None:
         try:
@@ -848,7 +872,8 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
             pass
     else:
         admin_entry['accepted'] = True
-        admin_entry['admin_id'] = query.from_user.id  # Store the admin ID who accepted the order
+        # Store the admin ID who accepted the order
+        admin_entry['admin_id'] = query.from_user.id
         try:
             await query.edit_message_text(f"✅ Order #{order_id} marked as received by admin {query.from_user.first_name}.", reply_markup=request_location_kb)
         except Exception:
@@ -926,11 +951,12 @@ async def force_arrival_callback(update: Update, context: ContextTypes.DEFAULT_T
     try:
         user = get_user(user_id)
         phone = user[5] if user and len(user) > 5 else "(unknown)"
-        
+
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Yes", callback_data=f"admin_seen_user_{order_id}_{user_id}")]
+            [InlineKeyboardButton(
+                "Yes", callback_data=f"admin_seen_user_{order_id}_{user_id}")]
         ])
-        
+
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"✅ Manual Arrival Triggered.\nPlease call {phone}.\nDo you see the user? Click 'Yes' when you have seen the receiver.",
@@ -961,9 +987,10 @@ async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ORDER_ITEM
 
+
 async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    
+
     # --- PARAMETER CHECK: PREVENT CRASH & UNAUTHORIZED COMMANDS ---
     if " - " not in text or text.startswith('/'):
         await update.message.reply_text(
@@ -988,6 +1015,7 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [['Confirm'], ['Cancel']], one_time_keyboard=True, resize_keyboard=True)
     )
     return ORDER_CONFIRM
+
 
 async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -1077,7 +1105,7 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # Store location in user_data for later
         context.user_data['pending_location'] = (lat, lon)
-        
+
         # Store pending order details in bot_data so we can access it in the callback
         # The callback comes from the admin, so we can't access the user's context.user_data there easily.
         context.bot_data[f'pending_order_{update.effective_user.id}'] = {
@@ -1085,7 +1113,7 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'item': context.user_data.get('item'),
             'price': context.user_data.get('price')
         }
-        
+
         return ORDER_LOCATION
 # --- Admin verifies user-uploaded location ---
 
@@ -1114,8 +1142,8 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
             code = ''.join(random.choices(string.digits, k=4))
 
             # Use user_id from callback data since update.effective_user might be the admin
-            # We need to retrieve the user's pending order data. 
-            # Since we don't have easy access to the user's conversation context here, 
+            # We need to retrieve the user's pending order data.
+            # Since we don't have easy access to the user's conversation context here,
             # we rely on the fact that the user is waiting.
             # Ideally, we should have stored the pending order details in bot_data or database.
             # For this fix, we'll assume the user data is still accessible or we can't easily get it.
@@ -1125,7 +1153,7 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
             # Let's assume for now we can't get the exact item details if they weren't stored globally.
             # BUT, looking at order_location, it stores 'pending_location'.
             # We need to store the pending order details in bot_data keyed by user_id in order_location.
-            
+
             pending_order = context.bot_data.get(f'pending_order_{user_id}')
             if not pending_order:
                 await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Error: Could not find pending order data for user {user_id}.")
@@ -1156,13 +1184,13 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                 sent_admin = await context.bot.send_message(
                     chat_id=ADMIN_CHAT_ID,
                     text=(f"🆕 New Order #{order_id}\n"
-                        f"Customer: {customer[1]} (tg id: {customer[0]})\n"
-                        f"Student ID: {customer[2]}\n"
-                        f"Block/Dorm: {customer[3]} / {customer[4]}\n"
-                        f"Phone: {customer[5]}\n"
-                        f"Restaurant: {pending_order['restaurant']}\n"
-                        f"Item: {pending_order['item']} | Price: {pending_order['price']} ETB\n"
-                        f"Verification Code: {code}"),
+                          f"Customer: {customer[1]} (tg id: {customer[0]})\n"
+                          f"Student ID: {customer[2]}\n"
+                          f"Block/Dorm: {customer[3]} / {customer[4]}\n"
+                          f"Phone: {customer[5]}\n"
+                          f"Restaurant: {pending_order['restaurant']}\n"
+                          f"Item: {pending_order['item']} | Price: {pending_order['price']} ETB\n"
+                          f"Verification Code: {code}"),
                     reply_markup=kb)
                 # store admin order state so callbacks can edit it later
                 admin_orders = context.bot_data.setdefault('admin_orders', {})
@@ -1178,7 +1206,8 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                             live_period=3600
                         )
                         # store admin live mapping so subsequent customer edits can update this message
-                        admin_live = context.bot_data.setdefault('admin_live', {})
+                        admin_live = context.bot_data.setdefault(
+                            'admin_live', {})
                         admin_live[user_id] = {
                             'message_id': sent.message_id,
                             'order_id': order_id,
@@ -1195,14 +1224,15 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                 logger.warning(f"Failed to send new order to admin chat: {e}")
 
             await context.bot.send_message(chat_id=user_id, text=f"Order Placed! Admin will review your order.\n\nIMPORTANT: Your verification code is *{code}*. Keep it safe.", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
-            
+
             # Send an inline Cancel Order button that prompts the user to re-enter their name if clicked
             try:
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                     "Cancel Order", callback_data=f"cancel_order_{order_id}")]])
                 sent_cancel = await context.bot.send_message(chat_id=user_id, text="If you wish to cancel your order, press below:", reply_markup=kb)
                 # store user's cancel-button message id so we can remove it if admin proceeds to purchase
-                user_cancel_msgs = context.bot_data.setdefault('user_cancel_msgs', {})
+                user_cancel_msgs = context.bot_data.setdefault(
+                    'user_cancel_msgs', {})
                 user_cancel_msgs[order_id] = {
                     'chat_id': user_id, 'message_id': sent_cancel.message_id}
             except Exception:
@@ -1280,14 +1310,16 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
     msg = update.effective_message
 
     if not msg or not msg.location:
-        print(f"DEBUG: relay_location_updates called but no location found. Update: {update.to_dict()}")
+        print(
+            f"DEBUG: relay_location_updates called but no location found. Update: {update.to_dict()}")
         return
 
     chat_id = msg.chat_id
     sender_id = msg.from_user.id
     lat = msg.location.latitude
     lon = msg.location.longitude
-    print(f"DEBUG: Location update from {sender_id} in chat {chat_id}: {lat}, {lon}")
+    print(
+        f"DEBUG: Location update from {sender_id} in chat {chat_id}: {lat}, {lon}")
     # Store latest user location in bot_data for on-demand admin requests
     context.bot_data[f'latest_location_{sender_id}'] = {
         'lat': lat, 'lon': lon, 'timestamp': time.time()}
@@ -1310,13 +1342,13 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
             # Only relay if order is still active and not completed/cancelled
             if not entry.get('active', True):
                 continue
-            
+
             # Check if this order was accepted by the current sender (admin)
             # If admin_id is not set (legacy orders), we might default to sender_id, but it's safer to require it.
             # However, for now, let's use get('admin_id', sender_id) to be backward compatible if needed,
             # but since we just added the fix to store admin_id, it should work for new orders.
             assigned_admin = entry.get('admin_id')
-            
+
             if entry.get('accepted') and (assigned_admin == sender_id or assigned_admin is None):
                 # Get order info
                 from database import get_order, get_user
@@ -1326,7 +1358,7 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                     # Relay location to user
                     relay_key = f"relay_{user_id}_{order_id}"
                     last_msg_id = context.bot_data.get(relay_key)
-                    
+
                     sent = None
                     if last_msg_id:
                         try:
@@ -1338,9 +1370,10 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                             )
                         except Exception as e:
                             # If edit fails (e.g. message deleted or live period expired), send new one
-                            print(f"DEBUG: Failed to edit live location for user {user_id}: {e}")
-                            last_msg_id = None # Force new send
-                    
+                            print(
+                                f"DEBUG: Failed to edit live location for user {user_id}: {e}")
+                            last_msg_id = None  # Force new send
+
                     if not last_msg_id:
                         try:
                             sent = await context.bot.send_location(
@@ -1352,7 +1385,8 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                             # Store the new message id
                             context.bot_data[relay_key] = sent.message_id
                         except Exception as e:
-                            logger.warning(f"Failed to send live location to user: {e}")
+                            logger.warning(
+                                f"Failed to send live location to user: {e}")
 
                     # Now check if within 50m
                     user = get_user(user_id)
@@ -1721,24 +1755,24 @@ async def restart_decision_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     data = query.data
-    
+
     if data == "restart_reset":
         # Clear all data
         context.application.user_data.clear()
         context.application.chat_data.clear()
         context.application.bot_data.clear()
-        
+
         # Re-initialize default bot_data structures
         context.bot_data.setdefault('tracking_relays', {})
         context.bot_data.setdefault('admin_live', {})
         context.bot_data.setdefault('admin_orders', {})
         context.bot_data.setdefault('order_locked', {})
-        
+
         # Force flush to persistence
         await context.application.persistence.flush()
-        
+
         await query.edit_message_text("✅ System reset. All data cleared. Ready for new orders.")
-        
+
     elif data == "restart_resume":
         await query.edit_message_text("▶️ System resumed. Previous state restored.")
 
@@ -1749,8 +1783,10 @@ async def post_init(application: Application):
     if application.bot_data.get('admin_orders') or application.bot_data.get('admin_live'):
         # Send message to admin
         keyboard = [
-            [InlineKeyboardButton("Intentional (Reset Data)", callback_data="restart_reset")],
-            [InlineKeyboardButton("Unintentional (Resume)", callback_data="restart_resume")]
+            [InlineKeyboardButton("Intentional (Reset Data)",
+                                  callback_data="restart_reset")],
+            [InlineKeyboardButton("Unintentional (Resume)",
+                                  callback_data="restart_resume")]
         ]
         try:
             await application.bot.send_message(
@@ -1798,10 +1834,12 @@ def main():
 
     request = HTTPXRequest(connect_timeout=60, read_timeout=60)
     persistence = PicklePersistence(filepath='bot_data.pickle')
-    application = Application.builder().token(TOKEN).request(request).persistence(persistence).post_init(post_init).build()
-    
+    application = Application.builder().token(TOKEN).request(
+        request).persistence(persistence).post_init(post_init).build()
+
     # Handler for restart decision
-    application.add_handler(CallbackQueryHandler(restart_decision_callback, pattern='^restart_'))
+    application.add_handler(CallbackQueryHandler(
+        restart_decision_callback, pattern='^restart_'))
     # Handler for admin requesting updated user location
     application.add_handler(CallbackQueryHandler(
         admin_request_location_callback, pattern='^admin_request_location_'))
@@ -1815,21 +1853,25 @@ def main():
     # Handler for admin confirming user payment
     application.add_handler(CallbackQueryHandler(
         admin_user_paid_callback, pattern='^admin_user_paid_yes_'))
-    
+
     # --- New Handlers for Payment Proof & Rating ---
     # Handler for user uploading payment proof (photo)
     # Note: We need to be careful not to conflict with other photo handlers if any.
     # Since we check context.bot_data inside the handlers, it should be fine to have multiple.
     # However, python-telegram-bot executes handlers in order.
     # We'll add a specific handler for photos that checks our specific states.
-    
-    application.add_handler(MessageHandler(filters.PHOTO, handle_payment_proof), group=1)
-    application.add_handler(MessageHandler(filters.PHOTO, handle_admin_receipt), group=2)
-    
+
+    application.add_handler(MessageHandler(
+        filters.PHOTO, handle_payment_proof), group=1)
+    application.add_handler(MessageHandler(
+        filters.PHOTO, handle_admin_receipt), group=2)
+
     # Handler for admin requesting to upload receipt
-    application.add_handler(CallbackQueryHandler(admin_req_receipt_callback, pattern='^admin_req_receipt_'))
+    application.add_handler(CallbackQueryHandler(
+        admin_req_receipt_callback, pattern='^admin_req_receipt_'))
     # Handler for rating callback
-    application.add_handler(CallbackQueryHandler(rating_callback, pattern='^rate_'))
+    application.add_handler(CallbackQueryHandler(
+        rating_callback, pattern='^rate_'))
     # -----------------------------------------------
 
     # Ensure shared relay store exists on the application-level bot_data

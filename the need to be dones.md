@@ -14,3 +14,7 @@
 # right after the order is complite i want the bot to delete the prompted messages from the user and have a clear page
 
 # user should be able to order multiple orders at once 
+
+# Add the owners account 1000688588972 for her and 1000466307371 for kal
+
+# the /order in the middle of the text is comfuzing ppl and i want ppl to know /order is a link like saying "click the /order in this text"
