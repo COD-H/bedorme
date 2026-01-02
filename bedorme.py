@@ -22,6 +22,9 @@ import sqlite3
 async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin confirms they have seen the user (within 50m)."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     if len(parts) < 5:
@@ -30,10 +33,28 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
     order_id = int(parts[3])
     user_id = int(parts[4])
 
+    # Determine account number based on admin username
+    admin_username = query.from_user.username
+    # Default account (fallback)
+    account_number = "1000397137833"
+
+    if admin_username:
+        # Remove @ if present just in case, though API usually returns without it
+        clean_username = admin_username.lstrip('@')
+
+        if clean_username == "H_karaseferian":
+            account_number = "1000688588972"
+        elif clean_username == "PLACEHOLDER_USERNAME_HERE":  # TODO: Replace with Kal's username
+            account_number = "1000466307371"
+        elif clean_username == "callowned":
+            account_number = "1000397137833"
+        elif clean_username == "allowned":
+            account_number = "1000397137833"
+
     # Notify user to start payment process and upload proof
     await context.bot.send_message(
         chat_id=user_id,
-        text=(f"Start the payment process for order #{order_id} to the account 1000397137833 CBE account.\n"
+        text=(f"Start the payment process for order #{order_id} to the account {account_number} CBE account.\n"
               "Only complete transferring after you have verified the package.\n\n"
               "📸 **Please upload a screenshot/photo of the payment proof here.**")
     )
@@ -89,6 +110,9 @@ async def handle_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYP
 async def admin_reject_proof_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin clicked 'Invalid Proof - Resend'."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     order_id = int(parts[3])
@@ -112,6 +136,9 @@ async def admin_reject_proof_callback(update: Update, context: ContextTypes.DEFA
 async def admin_req_receipt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin clicked 'Verify & Upload Receipt'."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     order_id = int(parts[3])
@@ -417,6 +444,9 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_user_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     if len(parts) < 5:
@@ -1089,6 +1119,9 @@ async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin taps 'Order Received' button in the admin group."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
 
     # callback format: admin_accept_{order_id}_{customer_id}
@@ -1210,6 +1243,9 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def force_arrival_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin manually clicked 'Force Arrival Notify'."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     order_id = int(parts[2])
@@ -1698,6 +1734,9 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_verify_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     if len(parts) < 6:
@@ -2003,10 +2042,27 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
             return
         order_id = int(parts[3])
         user_id = int(parts[4])
+
+        # Determine account number based on admin username
+        admin_username = query.from_user.username
+        # Default account (fallback)
+        account_number = "1000397137833"
+
+        if admin_username:
+            clean_username = admin_username.lstrip('@')
+            if clean_username == "H_karaseferian":
+                account_number = "1000688588972"
+            elif clean_username == "PLACEHOLDER_USERNAME_HERE":  # TODO: Replace with Kal's username
+                account_number = "1000466307371"
+            elif clean_username == "callowned":
+                account_number = "1000397137833"
+            elif clean_username == "allowned":
+                account_number = "1000397137833"
+
         # Notify user to start payment process
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"Start the payment process for order #{order_id} to the account 1000397137833 CBE account and only complete transferring after you have verified the package."
+            text=f"Start the payment process for order #{order_id} to the account {account_number} CBE account and only complete transferring after you have verified the package."
         )
         try:
             await query.edit_message_text("Confirmed: You have seen the receiver. User has been notified to start payment.")
@@ -2232,6 +2288,9 @@ async def keep_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def about_to_pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin clicked 'I'm about to pay' — ask customer to confirm purchase."""
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     parts = query.data.split("_")
     # Expected format: about_to_pay_{order_id}_{user_id}
@@ -2509,6 +2568,9 @@ async def clear_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def restart_decision_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if update.effective_chat.id != ADMIN_CHAT_ID:
+        await query.answer("Unauthorized action.", show_alert=True)
+        return
     await query.answer()
     data = query.data
 
@@ -2559,6 +2621,9 @@ def main():
     # Handler for admin requesting updated user location
     async def admin_request_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        if update.effective_chat.id != ADMIN_CHAT_ID:
+            await query.answer("Unauthorized action.", show_alert=True)
+            return
         await query.answer()
         parts = query.data.split("_")
         if len(parts) < 5:
