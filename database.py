@@ -92,13 +92,16 @@ def get_pending_orders():
 def assign_deliverer(order_id, deliverer_id):
     conn = sqlite3.connect('bedorme.db')
     c = conn.cursor()
-    c.execute("UPDATE orders SET deliverer_id = ?, status = 'accepted' WHERE order_id = ?",
+
+    # Atomic Check: Only assign if deliverer_id is NULL or 0 AND status is not cancelled
+    c.execute("UPDATE orders SET deliverer_id = ?, status = 'accepted' WHERE order_id = ? AND (deliverer_id IS NULL OR deliverer_id = 0) AND status != 'cancelled'",
               (deliverer_id, order_id))
+
+    rows_affected = c.rowcount
     conn.commit()
     conn.close()
 
-
-def save_rating(order_id, rating, comment=None):
+    # Return True if we successfully assigned it, False if someone else got it first or it was cancelled
     conn = sqlite3.connect('bedorme.db')
     c = conn.cursor()
     c.execute("INSERT INTO ratings (order_id, rating, comment) VALUES (?, ?, ?)",

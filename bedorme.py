@@ -1100,16 +1100,43 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
     order_id = int(parts[2])
     customer_id = int(parts[3]) if len(parts) > 3 else None
 
-    # Update DB with deliverer info
+    # --- FIX #4 & #5: ATOMIC DB CHECK ---
+    # Try to assign the order in the DB. If it returns False, someone else took it.
     try:
         from database import assign_deliverer
-        assign_deliverer(order_id, query.from_user.id)
+        success = assign_deliverer(order_id, query.from_user.id)
+
+        if not success:
+            # Check who actually took it
+            from database import get_order
+            order = get_order(order_id)
+            deliverer_id = order[2] if order else None
+
+            # If I am the one who took it (maybe I clicked twice), that's fine.
+            if deliverer_id != query.from_user.id:
+                await query.answer("⚠️ Order already taken by another admin!", show_alert=True)
+                # Optionally update the message to show it's taken
+                try:
+                    await query.edit_message_text(f"{query.message.text}\n\n❌ Already taken by another admin.")
+                except:
+                    pass
+                return
     except Exception as e:
         logger.error(f"Failed to assign deliverer in DB: {e}")
+        await query.answer("Error assigning order. Please try again.", show_alert=True)
+        return
 
     # Mark order as accepted and update admin message to show it's been accepted
+    # We still use bot_data for temporary UI state (like message_id), but the "Truth" is now in the DB.
     admin_orders = context.bot_data.setdefault('admin_orders', {})
     admin_entry = admin_orders.get(order_id)
+
+    # If this is a fresh start (bot restarted), admin_entry might be None, but DB says we accepted it.
+    if admin_entry is None:
+        admin_orders[order_id] = {
+            'accepted': True, 'admin_id': query.from_user.id}
+        admin_entry = admin_orders[order_id]
+
     request_location_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Request Updated Location",
                               callback_data=f"admin_request_location_{order_id}_{customer_id}")],
@@ -1118,32 +1145,19 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [InlineKeyboardButton("⚠️ Force Arrival Notify",
                               callback_data=f"force_arrival_{order_id}_{customer_id}")]
     ])
-    if admin_entry is None:
-        try:
-            # Preserve original text, append status
-            original_text = query.message.text
+
+    # Update the message UI
+    try:
+        # Preserve original text, append status
+        original_text = query.message.text
+        # Avoid appending multiple times if clicked again
+        if "Marked as received" not in original_text:
             new_text = f"{original_text}\n\n✅ Marked as received by {query.from_user.first_name}."
-            await query.edit_message_text(new_text, reply_markup=request_location_kb)
-        except Exception:
-            pass
-    else:
-        admin_entry['accepted'] = True
-        # Store the admin ID who accepted the order
-        admin_entry['admin_id'] = query.from_user.id
-        try:
-            # Preserve original text, append status
-            original_text = query.message.text
-            # Avoid appending multiple times if clicked again
-            if "Marked as received" not in original_text:
-                new_text = f"{original_text}\n\n✅ Marked as received by {query.from_user.first_name}."
-            else:
-                new_text = original_text
-            await query.edit_message_text(new_text, reply_markup=request_location_kb)
-        except Exception:
-            try:
-                await query.edit_message_text(f"✅ Order #{order_id} marked as received by admin {query.from_user.first_name}.")
-            except Exception:
-                pass
+        else:
+            new_text = original_text
+        await query.edit_message_text(new_text, reply_markup=request_location_kb)
+    except Exception:
+        pass
 
     # Notify the customer that their order is on the way
     try:
@@ -1200,6 +1214,14 @@ async def force_arrival_callback(update: Update, context: ContextTypes.DEFAULT_T
     parts = query.data.split("_")
     order_id = int(parts[2])
     user_id = int(parts[3])
+
+    # --- CHECK IF CANCELLED ---
+    from database import get_order
+    order = get_order(order_id)
+    # Status is at index 6
+    if order and order[6] == 'cancelled':
+        await query.edit_message_text("❌ This order was CANCELLED by the user. You cannot force arrival.")
+        return
 
     # Notify User
     try:
@@ -1567,6 +1589,20 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to notify admin: {e}")
 
         await message.reply_text(f"Order #{order_id} placed successfully! Code: {code}", reply_markup=ReplyKeyboardRemove())
+
+        # Send an inline Cancel Order button
+        try:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "Cancel Order", callback_data=f"cancel_order_{order_id}")]])
+            sent_cancel = await context.bot.send_message(chat_id=user_id, text="If you wish to cancel your order, press below:", reply_markup=kb)
+            # store user's cancel-button message id so we can remove it if admin proceeds to purchase
+            user_cancel_msgs = context.bot_data.setdefault(
+                'user_cancel_msgs', {})
+            user_cancel_msgs[order_id] = {
+                'chat_id': user_id, 'message_id': sent_cancel.message_id}
+        except Exception:
+            pass
+
         return ConversationHandler.END
 
     elif text == 'My Location':
@@ -2116,12 +2152,81 @@ async def cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Inform the user about cancellation policy
     try:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "Yes, Cancel Order", callback_data=f"confirm_cancel_order_{order_id}")],
+            [InlineKeyboardButton(
+                "No, Keep Order", callback_data=f"keep_order_{order_id}")]
+        ])
         await context.bot.send_message(chat_id=user_id, text=(
             "Order cancellation selected. Note: cancellation is only possible if the item has NOT yet been purchased.\n"
-            "If you haven't paid / confirmed purchase, the order may be cancelled.\n"
-            "Please enter your Full Name (use the name on your ID) to continue:"))
+            "Are you sure you want to cancel this order?"), reply_markup=kb)
     except Exception:
         pass
+
+
+async def confirm_cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User confirmed cancellation."""
+    query = update.callback_query
+    await query.answer()
+    parts = query.data.split("_")
+    order_id = int(parts[3])
+    user_id = query.from_user.id
+
+    # Double check lock
+    order_locked = context.bot_data.get('order_locked', {})
+    if order_locked.get(order_id):
+        await query.edit_message_text("Too late! The order is already confirmed/purchased.")
+        return
+
+    # Mark as cancelled in DB
+    try:
+        from database import update_order_status
+        update_order_status(order_id, 'cancelled')
+    except Exception as e:
+        logger.error(f"Failed to cancel order in DB: {e}")
+
+    # Notify User
+    await query.edit_message_text("✅ Order has been cancelled.")
+
+    # Notify Admin Group & Update Admin Message
+    try:
+        admin_orders = context.bot_data.get('admin_orders', {})
+        admin_entry = admin_orders.get(order_id)
+        if admin_entry and admin_entry.get('message_id'):
+            # Update the original admin message to show CANCELLED
+            try:
+                # We need to fetch the original text or reconstruct it.
+                # Since we can't easily fetch the text without an API call, let's try to edit it.
+                # We'll just append "❌ CANCELLED BY USER" and remove buttons.
+                await context.bot.edit_message_reply_markup(
+                    chat_id=ADMIN_CHAT_ID,
+                    message_id=admin_entry['message_id'],
+                    reply_markup=None  # Remove buttons
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=f"❌ **ORDER #{order_id} CANCELLED**\nThe user has cancelled this order.",
+                    reply_markup=None,
+                    reply_to_message_id=admin_entry['message_id']
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to update admin message on cancel: {e}")
+        else:
+            # Fallback if we don't have the message ID
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"❌ **ORDER #{order_id} CANCELLED**\nThe user has cancelled this order."
+            )
+    except Exception as e:
+        logger.error(f"Failed to notify admin of cancellation: {e}")
+
+
+async def keep_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Order kept. Thank you!")
 
 
 async def about_to_pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2602,9 +2707,15 @@ def main():
     # Handler for admin accepting an order
     application.add_handler(CallbackQueryHandler(
         admin_accept_order, pattern='^admin_accept_'))
-    # Handler for user cancel-order callback (will prompt re-entry of full name)
+    # Handler for user cancel-order callback
     application.add_handler(CallbackQueryHandler(
         cancel_order_callback, pattern='^cancel_order_'))
+    # Handler for confirming cancellation
+    application.add_handler(CallbackQueryHandler(
+        confirm_cancel_order_callback, pattern='^confirm_cancel_order_'))
+    # Handler for keeping order
+    application.add_handler(CallbackQueryHandler(
+        keep_order_callback, pattern='^keep_order_'))
     # Handler for admin about-to-pay action
     application.add_handler(CallbackQueryHandler(
         about_to_pay_callback, pattern='^about_to_pay_'))
