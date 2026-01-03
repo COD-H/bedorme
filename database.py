@@ -101,7 +101,10 @@ def assign_deliverer(order_id, deliverer_id):
     conn.commit()
     conn.close()
 
-    # Return True if we successfully assigned it, False if someone else got it first or it was cancelled
+    return rows_affected > 0
+
+
+def save_rating(order_id, rating, comment=None):
     conn = sqlite3.connect('bedorme.db')
     c = conn.cursor()
     c.execute("INSERT INTO ratings (order_id, rating, comment) VALUES (?, ?, ?)",
