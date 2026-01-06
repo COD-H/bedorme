@@ -17,6 +17,7 @@ def init_db():
     # Users table
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, 
+                  username TEXT,
                   name TEXT, 
                   student_id TEXT, 
                   block TEXT, 
@@ -25,6 +26,12 @@ def init_db():
                   is_deliverer INTEGER DEFAULT 0,
                   balance REAL DEFAULT 0,
                   tokens INTEGER DEFAULT 0)''')
+
+    # Migration to add username column if it doesn't exist (for existing databases)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     # Orders table
     c.execute('''CREATE TABLE IF NOT EXISTS orders
@@ -52,11 +59,24 @@ def init_db():
     conn.close()
 
 
-def add_user(user_id, name, student_id, block, dorm_number, phone):
+def add_user(user_id, username, name, student_id, block, dorm_number, phone):
     conn = sqlite3.connect('bedorme.db')
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, name, student_id, block, dorm_number, phone) VALUES (?, ?, ?, ?, ?, ?)",
-              (user_id, name, student_id, block, dorm_number, phone))
+    # Check if user exists to preserve balance/tokens/role if we are just updating info
+    c.execute(
+        "SELECT balance, tokens, is_deliverer FROM users WHERE user_id = ?", (user_id,))
+    existing = c.fetchone()
+
+    if existing:
+        balance, tokens, is_deliverer = existing
+        c.execute("""UPDATE users 
+                     SET username=?, name=?, student_id=?, block=?, dorm_number=?, phone=? 
+                     WHERE user_id=?""",
+                  (username, name, student_id, block, dorm_number, phone, user_id))
+    else:
+        c.execute("INSERT INTO users (user_id, username, name, student_id, block, dorm_number, phone) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (user_id, username, name, student_id, block, dorm_number, phone))
+
     conn.commit()
     conn.close()
 
@@ -184,3 +204,22 @@ def get_deliverer_active_job(deliverer_id):
     order = c.fetchone()
     conn.close()
     return order
+
+
+def update_order_location(order_id, lat, lon):
+    conn = sqlite3.connect('bedorme.db')
+    c = conn.cursor()
+    c.execute("UPDATE orders SET delivery_lat = ?, delivery_lon = ? WHERE order_id = ?",
+              (lat, lon, order_id))
+    conn.commit()
+    conn.close()
+
+
+def get_user_active_orders(user_id):
+    conn = sqlite3.connect('bedorme.db')
+    c = conn.cursor()
+    # Get recent active orders
+    c.execute("SELECT order_id FROM orders WHERE customer_id = ? AND status IN ('pending', 'accepted', 'assigned')", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows]

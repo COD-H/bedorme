@@ -5,9 +5,9 @@ import math
 import asyncio
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
 from menus import MENUS
-from database import init_db, add_user, create_order, get_user
+from database import init_db, add_user, create_order, get_user, update_order_location, get_user_active_orders
 from database import get_order
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
 from dotenv import load_dotenv
@@ -327,21 +327,15 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # --- NEW: Delete all messages in user's chat, then send /start prompt ---
     try:
-        chat = await context.bot.get_chat(user_id)
-        async for message in context.bot.get_chat_history(user_id, limit=100):
-            try:
-                await context.bot.delete_message(chat_id=user_id, message_id=message.message_id)
-            except Exception:
-                pass
-        # After deleting, send a new /start prompt
+        # Telegram Bots cannot "Clear History" or read past messages to delete them.
+        # We will simply send the final prompt to the user.
         await context.bot.send_message(
             chat_id=user_id,
-            text='Click me: /start',
-            parse_mode='Markdown'
+            text="✅ Order Complete!\n\nTo place a new order, click: /order\nTo restart main menu, click: /start"
         )
     except Exception as e:
         logger.warning(
-            f"Failed to clean up user chat after order completion: {e}")
+            f"Failed to send final prompt to user: {e}")
     # Only now, after all notifications, remove the relay so the user can see the admin's location until the very end
     try:
         logger.info(f"Cleaning up data for completed order #{order_id}")
@@ -426,17 +420,16 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning(f"Failed to post rating to channel: {e}")
 
-    # Wait 10 seconds, then delete all messages in the user's chat
+    # Wait 3 seconds, then Prompt
     try:
-        await asyncio.sleep(10)
+        await asyncio.sleep(3)
         user_id = query.from_user.id
-        async for message in context.bot.get_chat_history(user_id, limit=100):
-            try:
-                await context.bot.delete_message(chat_id=user_id, message_id=message.message_id)
-            except Exception:
-                pass
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="✅ Rating Submitted.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start"
+        )
     except Exception as e:
-        logger.warning(f"Failed to clean up user chat after rating: {e}")
+        logger.warning(f"Failed to send final prompt after rating: {e}")
 
 
 # --- Payment Confirmation Callback (Legacy/Fallback) ---
@@ -1032,9 +1025,10 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     user_data['phone'] = text
     user_id = update.effective_user.id
+    username = update.effective_user.username  # Get telegram username
 
-    # Keeping your database call exactly as it was
-    add_user(user_id, user_data['name'], user_data['student_id'],
+    # Update database with username
+    add_user(user_id, username, user_data['name'], user_data['student_id'],
              user_data['block'], user_data['dorm'], user_data['phone'])
 
     # Cleanup attempts counter
@@ -1052,7 +1046,7 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('in_registration', None)
-    await update.message.reply_text("Operation cancelled.", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Operation cancelled.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 # --- Order Flow ---
@@ -1147,10 +1141,22 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             # If I am the one who took it (maybe I clicked twice), that's fine.
             if deliverer_id != query.from_user.id:
-                await query.answer("⚠️ Order already taken by another admin!", show_alert=True)
-                # Optionally update the message to show it's taken
+                # Get the name of the admin who took it for clarity
                 try:
-                    await query.edit_message_text(f"{query.message.text}\n\n❌ Already taken by another admin.")
+                    member = await context.bot.get_chat_member(ADMIN_CHAT_ID, deliverer_id)
+                    taken_by = member.user.full_name
+                except:
+                    taken_by = f"Admin {deliverer_id}"
+
+                await query.answer(f"⚠️ Order already taken by {taken_by}!", show_alert=True)
+
+                # Update the message to visually indicate it's taken, removing buttons to prevent confusion
+                try:
+                    # We can keep the text but maybe remove buttons or show a "Taken" label
+                    # But if we remove buttons, the original owner can't use them?
+                    # Actually, since this is a shared chat, modifying the message affects everyone!
+                    # So we should NOT remove buttons. Just alert the clicker.
+                    pass
                 except:
                     pass
                 return
@@ -1169,6 +1175,10 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
         admin_orders[order_id] = {
             'accepted': True, 'admin_id': query.from_user.id}
         admin_entry = admin_orders[order_id]
+
+    # ALWAYS Ensure it is marked as accepted in memory
+    admin_entry['accepted'] = True
+    admin_entry['admin_id'] = query.from_user.id
 
     request_location_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Request Updated Location",
@@ -1941,6 +1951,16 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
     context.bot_data[f'latest_location_{sender_id}'] = {
         'lat': lat, 'lon': lon, 'timestamp': time.time()}
 
+    # --- IMPROVEMENT: Update active orders with better location ---
+    if sender_id != ADMIN_CHAT_ID:  # If it's a user
+        try:
+            active_orders = get_user_active_orders(sender_id)
+            for oid in active_orders:
+                update_order_location(oid, lat, lon)
+                print(f"DEBUG: Updated location for Order #{oid} in DB")
+        except Exception as e:
+            print(f"DEBUG: Failed to update order location in DB: {e}")
+
     # --- Rate limiting logic ---
     now = time.time()
     key = f"{chat_id}:{sender_id}"
@@ -1951,152 +1971,75 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
     last_location_update[key] = now
 
     # --- New: If location is sent in the admin group, relay to user ---
-    if chat_id == ADMIN_CHAT_ID:
-        # Try to find the latest accepted order for this admin
-        admin_orders = context.bot_data.get('admin_orders', {})
-        # Find the most recent order accepted by this admin
-        for order_id, entry in admin_orders.items():
-            # Only relay if order is still active and not completed/cancelled
-            if not entry.get('active', True):
-                continue
-
-            # Check if this order was accepted by the current sender (admin)
-            # If admin_id is not set (legacy orders), we might default to sender_id, but it's safer to require it.
-            # However, for now, let's use get('admin_id', sender_id) to be backward compatible if needed,
-            # but since we just added the fix to store admin_id, it should work for new orders.
-            assigned_admin = entry.get('admin_id')
-
-            if entry.get('accepted') and (assigned_admin == sender_id or assigned_admin is None):
-                # Get order info
-                from database import get_order, get_user
-                order = get_order(order_id)
-                if order:
-                    user_id = order[1]  # customer_id
-                    # Relay location to user
-                    relay_key = f"relay_{user_id}_{order_id}"
-                    last_msg_id = context.bot_data.get(relay_key)
-
-                    sent = None
-                    if last_msg_id:
-                        try:
-                            await context.bot.edit_message_live_location(
-                                chat_id=user_id,
-                                message_id=last_msg_id,
-                                latitude=lat,
-                                longitude=lon
-                            )
-                        except Exception as e:
-                            # If edit fails (e.g. message deleted or live period expired), send new one
-                            print(
-                                f"DEBUG: Failed to edit live location for user {user_id}: {e}")
-                            last_msg_id = None  # Force new send
-
-                    if not last_msg_id:
-                        try:
-                            sent = await context.bot.send_location(
-                                chat_id=user_id,
-                                latitude=lat,
-                                longitude=lon,
-                                live_period=3600
-                            )
-                            # Store the new message id
-                            context.bot_data[relay_key] = sent.message_id
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to send live location to user: {e}")
-
-                    # Now check if within 50m
-                    user = get_user(user_id)
-                    user_lat = order[11]  # delivery_lat
-                    user_lon = order[12]  # delivery_lon
-                    if user_lat is not None and user_lon is not None:
-                        distance = haversine(lat, lon, user_lat, user_lon)
-                        # Increased radius to 150m for better detection
-                        if distance < 150:
-                            notified_key = f"arrived_{order_id}"
-                            if not context.bot_data.get(notified_key):
-                                await context.bot.send_message(
-                                    chat_id=user_id,
-                                    text="Your food has arrived! You will shortly receive a call from our agents."
-                                )
-                                phone = user[5] if user and len(
-                                    user) > 5 else "(unknown)"
-                                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                                kb = InlineKeyboardMarkup([
-                                    [InlineKeyboardButton(
-                                        "Yes", callback_data=f"admin_seen_user_{order_id}_{user_id}")]
-                                ])
-                                await context.bot.send_message(
-                                    chat_id=ADMIN_CHAT_ID,
-                                    text=f"You are < 50m from the user for order #{order_id}. Please call {phone}.\nDo you see the user? Click 'Yes' when you have seen the receiver.",
-                                    reply_markup=kb
-                                )
-                                context.bot_data[notified_key] = True
-                break
-    query = update.callback_query
-    if query:
-        await query.answer()
-        parts = query.data.split("_")
-        if len(parts) < 5:
-            await query.edit_message_text("Invalid callback data.")
-            return
-        order_id = int(parts[3])
-        user_id = int(parts[4])
-
-        # Determine account number based on admin username
-        admin_username = query.from_user.username
-        # Default account (fallback)
-        account_number = "1000397137833"
-
-        if admin_username:
-            clean_username = admin_username.lstrip('@')
-            if clean_username == "H_karaseferian":
-                account_number = "1000688588972"
-            elif clean_username == "PLACEHOLDER_USERNAME_HERE":  # TODO: Replace with Kal's username
-                account_number = "1000466307371"
-            elif clean_username == "callowned":
-                account_number = "1000397137833"
-            elif clean_username == "allowned":
-                account_number = "1000397137833"
-
-        # Notify user to start payment process
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"Start the payment process for order #{order_id} to the account {account_number} CBE account and only complete transferring after you have verified the package."
-        )
-        try:
-            await query.edit_message_text("Confirmed: You have seen the receiver. User has been notified to start payment.")
-        except Exception:
-            pass
-
-    # Check if we have a relay set up for this user
+    # Check if we have a relay set up for this user (explicit mapping from admin_accept_order)
     relays = context.bot_data.get('tracking_relays', {})
     print(f"DEBUG: Current relays keys: {list(relays.keys())}")
 
     if sender_id in relays:
         target = relays[sender_id]
+        user_id = target.get('chat_id')
+        order_id = target.get('order_id')
+
+        # 1. Relay Location
         try:
-            print(f"DEBUG: Relaying to {target.get('chat_id')}")
+            print(f"DEBUG: Relaying to {user_id}")
             # If target has a message_id we can edit the live location, otherwise send a new location
             if target.get('message_id'):
                 await context.bot.edit_message_live_location(
-                    chat_id=target['chat_id'],
+                    chat_id=user_id,
                     message_id=target['message_id'],
                     latitude=lat,
                     longitude=lon
                 )
             else:
                 sent = await context.bot.send_location(
-                    chat_id=target['chat_id'],
+                    chat_id=user_id,
                     latitude=lat,
                     longitude=lon,
                     live_period=3600
                 )
                 # store the message_id so subsequent updates can edit instead of sending new messages
-                try:
-                    target['message_id'] = sent.message_id
-                except Exception:
-                    pass
+                target['message_id'] = sent.message_id
+        except Exception as e:
+            # If edit fails (e.g. message deleted), reset ID to send new one next time
+            print(f"DEBUG: Failed to relay location: {e}")
+            target['message_id'] = None
+
+        # 2. Check for Arrival (Distance < 150m)
+        try:
+            from database import get_order, get_user
+            order = get_order(order_id)
+            if order:
+                # user location from order
+                user_lat = order[11]
+                user_lon = order[12]
+
+                if user_lat is not None and user_lon is not None:
+                    distance = haversine(lat, lon, user_lat, user_lon)
+                    if distance < 150:
+                        notified_key = f"arrived_{order_id}"
+                        if not context.bot_data.get(notified_key):
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text="Your food has arrived! You will shortly receive a call from our agents."
+                            )
+
+                            user = get_user(user_id)
+                            phone = user[5] if user and len(
+                                user) > 5 else "(unknown)"
+
+                            kb = InlineKeyboardMarkup([
+                                [InlineKeyboardButton(
+                                    "Yes", callback_data=f"admin_seen_user_{order_id}_{user_id}")]
+                            ])
+                            await context.bot.send_message(
+                                chat_id=ADMIN_CHAT_ID,
+                                text=f"You are < 50m from the user for order #{order_id}. Please call {phone}.\nDo you see the user? Click 'Yes' when you have seen the receiver.",
+                                reply_markup=kb
+                            )
+                            context.bot_data[notified_key] = True
+        except Exception as e:
+            print(f"DEBUG: Error in arrival check: {e}")
 
             # --- New: Check if admin is within 50m of user ---
             # Get order info
@@ -2168,9 +2111,10 @@ async def cancel_order_callback(update: Update, context: ContextTypes.DEFAULT_TY
     # Prevent cancellation if order already locked (user already confirmed purchase)
     parts = query.data.split("_")
     order_id = None
-    if len(parts) >= 2:
+    # Data format: cancel_order_{order_id} -> ["cancel", "order", "123"]
+    if len(parts) >= 3:
         try:
-            order_id = int(parts[1])
+            order_id = int(parts[2])
         except Exception:
             order_id = None
 
@@ -2243,7 +2187,7 @@ async def confirm_cancel_order_callback(update: Update, context: ContextTypes.DE
         logger.error(f"Failed to cancel order in DB: {e}")
 
     # Notify User
-    await query.edit_message_text("✅ Order has been cancelled.")
+    await query.edit_message_text("✅ Order has been cancelled.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start")
 
     # Notify Admin Group & Update Admin Message
     try:
@@ -2302,8 +2246,23 @@ async def about_to_pay_callback(update: Update, context: ContextTypes.DEFAULT_TY
     customer_id = int(parts[4]) if len(parts) > 4 else None
 
     # find admin order entry for later edits and check accepted state
-    admin_orders = context.bot_data.get('admin_orders', {})
+    admin_orders = context.bot_data.setdefault('admin_orders', {})
     admin_entry = admin_orders.get(order_id)
+
+    # --- RECOVERY: Check DB if memory is lost (e.g. restart) ---
+    if not admin_entry:
+        from database import get_order
+        order = get_order(order_id)  # (id, cust, deliverer, ...)
+        # If order has a deliverer_id (index 2), it is accepted
+        if order and order[2]:
+            # Re-populate memory from DB + current message context
+            admin_orders[order_id] = {
+                'accepted': True,
+                'admin_id': order[2],
+                'message_id': query.message.message_id
+            }
+            admin_entry = admin_orders[order_id]
+
     admin_msg_id = admin_entry.get('message_id') if admin_entry else None
 
     # Ensure admin already accepted the order before initiating about-to-pay
@@ -2351,7 +2310,15 @@ async def about_to_pay_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Let admin know request has been forwarded
     try:
-        await query.edit_message_text("🔔 Confirmation request sent to customer.")
+        # Provide visual feedback without destroying the control panel
+        current_text = query.message.text if query.message else ""
+        if "🔔 Waiting for customer confirmation..." not in current_text:
+            await query.edit_message_text(
+                text=f"{current_text}\n\n🔔 Waiting for customer confirmation...",
+                reply_markup=query.message.reply_markup
+            )
+        else:
+            await query.answer("Request sent! Waiting for customer...", show_alert=True)
     except Exception:
         pass
 
@@ -2526,9 +2493,13 @@ async def ack_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     parts = query.data.split("_")
     order_id = int(parts[2]) if len(parts) > 2 else None
     user_id = query.from_user.id if query.from_user else None
-    # Prompt user to re-enter full name (loop back)
+
+    # Send the standard done prompt
     try:
-        await context.bot.send_message(chat_id=user_id, text="Acknowledged. Please enter your Full Name (use the name on your ID):")
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="Acknowledged.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start"
+        )
     except Exception:
         pass
 
@@ -2576,8 +2547,21 @@ async def restart_decision_callback(update: Update, context: ContextTypes.DEFAUL
 
     if data == "restart_reset":
         # Clear all data
-        context.application.user_data.clear()
-        context.application.chat_data.clear()
+        # Note: application.user_data might be read-only (mappingproxy) in some versions/contexts
+        try:
+            # Try to clear if mutable
+            if hasattr(context.application.user_data, 'clear'):
+                context.application.user_data.clear()
+        except Exception as e:
+            logger.warning(f"Could not clear user_data: {e}")
+
+        try:
+            if hasattr(context.application.chat_data, 'clear'):
+                context.application.chat_data.clear()
+        except Exception as e:
+            logger.warning(f"Could not clear chat_data: {e}")
+
+        # bot_data is the most important one for order state
         context.application.bot_data.clear()
 
         # Re-initialize default bot_data structures
@@ -2649,7 +2633,18 @@ def main():
                         f"Phone: {phone}")
                 await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=info)
             await context.bot.send_location(chat_id=ADMIN_CHAT_ID, latitude=lat, longitude=lon)
-            await query.edit_message_text(f"Latest location for user {user_id} sent to admin group.")
+            # Rebuild the original keyboard so options don't disappear
+            request_location_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Request Updated Location",
+                                      callback_data=f"admin_request_location_{order_id}_{user_id}")],
+                [InlineKeyboardButton(
+                    "I'm about to pay", callback_data=f"about_to_pay_{order_id}_{user_id}")],
+                [InlineKeyboardButton("⚠️ Force Arrival Notify",
+                                      callback_data=f"force_arrival_{order_id}_{user_id}")]
+            ])
+
+            # Edit the text but keep the buttons!
+            await query.edit_message_text(f"Latest location for user {user_id} sent to admin group below.\n(Original order message buttons restored)", reply_markup=request_location_kb)
         else:
             await query.edit_message_text("No location available for this user yet.")
 
@@ -2800,10 +2795,20 @@ def main():
     application.add_handler(MessageHandler(
         filters.LOCATION, relay_location_updates))
 
+    # Explicitly handle edited messages (Live Location updates)
+    async def edited_location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.edited_message and update.edited_message.location:
+            await relay_location_updates(update, context)
+
+    application.add_handler(TypeHandler(Update, edited_location_handler))
+
     # --- Fallback Handler for Unhandled Messages ---
     # This catches messages that didn't match any conversation state or command.
     # It likely means the bot restarted and lost state (if persistence failed) or user is sending random text.
     async def global_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message:
+            return
+
         # Ignore commands (they are usually handled or ignored silently)
         if update.message.text and update.message.text.startswith('/'):
             return
