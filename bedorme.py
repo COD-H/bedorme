@@ -2663,18 +2663,13 @@ def main():
 
     # Separate general API request client from the long-poll request config
     # Long-poll needs a larger read timeout than Telegram's poll timeout
-    # request = HTTPXRequest(connect_timeout=10, read_timeout=30)
+    request = HTTPXRequest(connect_timeout=10, read_timeout=60)
     persistence = PicklePersistence(filepath='bot_data.pickle')
     application = (
         Application
         .builder()
         .token(TOKEN)
-        # .request(request)
-        .connect_timeout(10)
-        .read_timeout(30)
-        # Configure dedicated timeouts for getUpdates long-polling
-        .get_updates_connect_timeout(10)
-        .get_updates_read_timeout(120)
+        .request(request)
         .persistence(persistence)
         .post_init(post_init)
         .build()
