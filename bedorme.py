@@ -3,7 +3,9 @@
 import time
 import math
 import asyncio
+from keep_alive import keep_alive  # Import keep_alive
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
+
 from menus import MENUS
 from database import init_db, add_user, create_order, get_user, update_order_location, get_user_active_orders
 from database import get_order
@@ -44,7 +46,7 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
 
         if clean_username == "H_karaseferian":
             account_number = "1000688588972"
-        elif clean_username == "PLACEHOLDER_USERNAME_HERE":  # TODO: Replace with Kal's username
+        elif clean_username == "@kalnlisa":  # TODO: Replace with Kal's username
             account_number = "1000466307371"
         elif clean_username == "callowned":
             account_number = "1000397137833"
@@ -2823,6 +2825,7 @@ def main():
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, global_fallback))
 
+    keep_alive()  # Start the web server to keep the bot alive
     application.run_polling()
 
 
