@@ -1,4 +1,6 @@
 python-telegram-bot>=20.0
 python-dotenv>=1.0
 flask
+tornado
+psycopg2-binary
 

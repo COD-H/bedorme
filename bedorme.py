@@ -2663,13 +2663,15 @@ def main():
 
     # Separate general API request client from the long-poll request config
     # Long-poll needs a larger read timeout than Telegram's poll timeout
-    request = HTTPXRequest(connect_timeout=10, read_timeout=30)
+    # request = HTTPXRequest(connect_timeout=10, read_timeout=30)
     persistence = PicklePersistence(filepath='bot_data.pickle')
     application = (
         Application
         .builder()
         .token(TOKEN)
-        .request(request)
+        # .request(request)
+        .connect_timeout(10)
+        .read_timeout(30)
         # Configure dedicated timeouts for getUpdates long-polling
         .get_updates_connect_timeout(10)
         .get_updates_read_timeout(120)
@@ -2848,8 +2850,26 @@ def main():
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, global_fallback))
 
-    keep_alive()  # Start the web server to keep the bot alive
-    application.run_polling()
+    # Check for Render environment or explicit PORT setting to determine mode
+    webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
+
+    if webhook_url:
+        port = int(os.environ.get("PORT", 8080))
+        # Ensure no trailing slash
+        if webhook_url.endswith("/"):
+            webhook_url = webhook_url[:-1]
+
+        logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TOKEN,
+            webhook_url=f"{webhook_url}/{TOKEN}"
+        )
+    else:
+        logging.info("Starting in Polling mode.")
+        keep_alive()  # Start the web server to keep the bot alive
+        application.run_polling()
 
 
 if __name__ == '__main__':
