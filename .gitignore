@@ -1,7 +1,0 @@
-.env
-bedorme.db
-bot_data.pickle
-__pycache__/
-*.pyc
-.venv/
-
