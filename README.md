@@ -71,6 +71,24 @@ BeDormeDelivery is a professional Python-based Telegram bot designed to streamli
 	python bedorme.py
 	```
 
+## Deploying to Render
+
+- Create a new Web Service in Render using this repo. The included `render.yaml` configures:
+	- `buildCommand`: `pip install -r requirements.txt`
+	- `startCommand`: `python bedorme.py`
+	- `healthCheckPath`: `/` (served by the small Flask keep-alive in `keep_alive.py`)
+	- `PYTHON_VERSION`: `3.11.6` (recommended for python-telegram-bot)
+
+- Set the following environment variables in the Render dashboard:
+	- `TELEGRAM_TOKEN`: your bot token from BotFather
+	- `ADMIN_CHAT_ID`: Telegram chat ID for your admin group (negative for supergroups)
+	- `COMPLETED_ORDERS_CHANNEL_ID`: Channel ID for completion logs (optional but recommended)
+
+Notes
+- Web Service works with polling because `keep_alive.py` binds to the `$PORT` Render provides.
+- If you prefer a Worker instead of a Web Service, you can create a Render Worker and use the same `startCommand` (`python bedorme.py`). The keep-alive server isn’t required for Workers.
+- On startup, the bot clears any existing webhook to avoid conflicts with polling.
+
 ## Usage
 - Start a chat with your Telegram bot.
 - Use the provided commands to register, browse menus, place orders, and track deliveries.

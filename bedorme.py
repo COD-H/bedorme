@@ -2582,6 +2582,12 @@ async def restart_decision_callback(update: Update, context: ContextTypes.DEFAUL
 
 
 async def post_init(application: Application):
+    # Ensure we are not conflicting with any previously set webhook
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        logging.warning(f"delete_webhook failed or not needed: {e}")
+
     # Check if we have resumed state (bot_data is not empty)
     # We check specific keys that indicate active state
     if application.bot_data.get('admin_orders') or application.bot_data.get('admin_live'):
@@ -2650,10 +2656,27 @@ def main():
         else:
             await query.edit_message_text("No location available for this user yet.")
 
-    request = HTTPXRequest(connect_timeout=60, read_timeout=60)
+    # Ensure bot token is available
+    if not TOKEN:
+        logging.error("TELEGRAM_TOKEN is not set in environment. Aborting startup.")
+        return
+
+    # Separate general API request client from the long-poll request config
+    # Long-poll needs a larger read timeout than Telegram's poll timeout
+    request = HTTPXRequest(connect_timeout=10, read_timeout=30)
     persistence = PicklePersistence(filepath='bot_data.pickle')
-    application = Application.builder().token(TOKEN).request(
-        request).persistence(persistence).post_init(post_init).build()
+    application = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .request(request)
+        # Configure dedicated timeouts for getUpdates long-polling
+        .get_updates_connect_timeout(10)
+        .get_updates_read_timeout(120)
+        .persistence(persistence)
+        .post_init(post_init)
+        .build()
+    )
 
     # Handler for restart decision
     application.add_handler(CallbackQueryHandler(
