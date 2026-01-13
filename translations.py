@@ -17,7 +17,31 @@ TRANSLATIONS = {
         'cancel': "Cancel",
         'confirm': "Confirm",
         'cancel_order_btn': "Cancel Order {i}",
-        'reg_reset_msg': "🔄 **Registration Reset**\n\nLet's start over. Please enter your Full Name (use the name on your ID):"
+        'reg_reset_msg': "🔄 **Registration Reset**\n\nLet's start over. Please enter your Full Name (use the name on your ID):",
+        # Registration Prompts
+        'enter_id': "Nice to meet you, {name}!\n\nNow, please enter your Student ID (e.g., UGR/1234/12 or ETS/1234/12):",
+        'enter_block': "Got it. Now, please enter your Block Number:",
+        'male': "Male",
+        'female': "Female",
+        'select_gender': "Are you Male or Female? (Select below)",
+        'enter_dorm': "Understood. Now, enter your Dorm Number:",
+        'enter_phone': "Almost done! Please enter your Phone Number (e.g., 0911223344):",
+        'reg_complete': "🎉 Registration Complete!\n\nName: {name}\nID: {sid}\nBlock: {block}\nDorm: {dorm}\nPhone: {phone}\n\nYou can now order food!",
+        'reg_fail_id': "⚠️ That doesn't look like a valid ID. Please try again (e.g., UGR/1234/12).",
+        'reg_fail_phone': "⚠️ Please enter a valid 10-digit phone number starting with 09 or 07.",
+        
+        # Ordering Prompts
+        'choose_rest': "Please choose a restaurant:",
+        'choose_item': "Menu for {restaurant}:\nSelect an item:",
+        'share_loc': "📍 Please share your **current location** so we can deliver to you.\n\nTap the 'Share Location' button below (on mobile) or send a location attachment.",
+        'share_loc_btn': "Share My Location",
+        'confirm_loc': "Is this your correct delivery location?",
+        'yes_correct': "Yes, Correct",
+        'no_retry': "No, Retry",
+        'order_placed': "Order #{order_id} placed successfully! Code: {code}",
+        'cancel_order_prompt': "If you wish to cancel your order, press below:",
+        'cancel_order_button': "Cancel Order",
+        'resume_order': "Resume Order"
     },
     'am': {
         'choose_lang': "Please choose your language:\nእባክዎ ቋንቋ ይምረጡ:",
@@ -36,8 +60,32 @@ TRANSLATIONS = {
         'cancel': "ሰርዝ",
         'confirm': "አረጋግጥ",
         'cancel_order_btn': "ትዕዛዝ {i}ን ሰርዝ",
-        'reg_reset_msg': "🔄 **ምዝገባ እንደገና ተጀምሯል**\n\nከአዲስ እንጀምር። እባክዎ ሙሉ ስምዎን ያስገቡ (መታወቂያዎ ላይ እንዳለው):"
-    }
+        'reg_reset_msg': "🔄 **ምዝገባ እንደገና ተጀምሯል**\n\nከአዲስ እንጀምር። እባክዎ ሙሉ ስምዎን ያስገቡ (መታወቂያዎ ላይ እንዳለው):",
+        # Registration Prompts
+        'enter_id': "ስለተዋወቀን ደስ ብሎኛል {name}!\n\nአሁን፣ እባክዎ የተማሪ መታወቂያ ቁጥርዎን ያስገቡ (ምሳሌ፣ UGR/1234/12 ወይም ETS/1234/12):",
+        'enter_block': "እሺ። አሁን፣ እባክዎ የብሎክ ቁጥርዎን ያስገቡ:",
+        'male': "ወንድ",
+        'female': "ሴት",
+        'select_gender': "ፆታዎን ይምረጡ (ከታች ይምረጡ)",
+        'enter_dorm': "እሺ። አሁን፣ የዶርም ቁጥርዎን ያስገቡ:",
+        'enter_phone': "ለመጨረስ ተቃርበናል! እባክዎ ስልክ ቁጥርዎን ያስገቡ (ምሳሌ፣ 0911223344):",
+        'reg_complete': "🎉 ምዝገባ ተጠናቅቋል!\n\nስም: {name}\nመታወቂያ: {sid}\nብሎክ: {block}\nዶርም: {dorm}\nስልክ: {phone}\n\nአሁን ምግብ ማዘዝ ይችላሉ!",
+        'reg_fail_id': "⚠️ ትክክለኛ መታወቂያ አይመስልም። እባክዎ እንደገና ይሞክሩ (ምሳሌ፣ UGR/1234/12).",
+        'reg_fail_phone': "⚠️ እባክዎ በ 09 ወይም 07 የሚጀምር ትክክለኛ የ10 አሃዝ ስልክ ቁጥር ያስገቡ።",
+        
+        # Ordering Prompts
+        'choose_rest': "እባክዎ ምግብ ቤት ይምረጡ:",
+        'choose_item': "የ {restaurant} ምናሌ:\nምግብ ይምረጡ:",
+        'share_loc': "📍 እባክዎ የምናደርስበትን **ያሉበትን ቦታ (Location)** ያጋሩን።\n\nከታች ያለውን 'Share Location' ቁልፍ ይጫኑ (ሞባይል ላይ) ወይም ቦታዎን share ያድርጉ።",
+        'share_loc_btn': "ቦታዬን አጋራ (Share Location)",
+        'confirm_loc': "ይህ የማድረሻ ቦታ ማስረከቢያ ቦታ ትክክል ነው?",
+        'yes_correct': "አዎ፣ ትክክል ነው",
+        'no_retry': "አይ፣ እንደገና ለመሞከር",
+        'order_placed': "ትዕዛዝ #{order_id} በድሎ ተመዝግቧል! ኮድ: {code}",
+        'cancel_order_prompt': "ትዕዛዝዎን መሰረዝ ከፈለጉ፣ ከታች ይጫኑ:",
+        'cancel_order_button': "ትዕዛዝ ሰርዝ",
+        'resume_order': "ትዕዛዝ ቀጥል"
+    } -> TRANSLATIONS['am']
 }
 
 def get_text(key, lang='en'):
