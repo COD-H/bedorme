@@ -48,7 +48,8 @@ def init_db():
                         phone TEXT, 
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
-                        tokens INTEGER DEFAULT 0)''')
+                        tokens INTEGER DEFAULT 0,
+                        language TEXT DEFAULT NULL)''')
             
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS orders
                         (order_id SERIAL PRIMARY KEY,
@@ -76,13 +77,20 @@ def init_db():
                         phone TEXT, 
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
-                        tokens INTEGER DEFAULT 0)''')
+                        tokens INTEGER DEFAULT 0,
+                        language TEXT DEFAULT NULL)''')
 
             # Migration to add username column if it doesn't exist (for existing databases)
             try:
                 execute_query(conn, "ALTER TABLE users ADD COLUMN username TEXT")
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+            # Migration to add language column if it doesn't exist
+            try:
+                execute_query(conn, "ALTER TABLE users ADD COLUMN language TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
 
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS orders
                         (order_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,6 +299,25 @@ def update_order_location(order_id, lat, lon):
 
 def get_user_active_orders(user_id):
     conn = get_db_connection()
+
+
+def set_user_language(user_id, language):
+    conn = get_db_connection()
+    try:
+        execute_query(conn, "UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_language(user_id):
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT language FROM users WHERE user_id = ?", (user_id,))
+        res = cur.fetchone()
+        return res[0] if res else None
+    finally:
+        conn.close()
     try:
         # Get recent active orders
         cur = execute_query(conn, "SELECT order_id FROM orders WHERE customer_id = ? AND status IN ('pending', 'accepted', 'assigned')", (user_id,))

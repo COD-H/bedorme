@@ -7,8 +7,9 @@ from keep_alive import keep_alive  # Import keep_alive
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
 
 from menus import MENUS
-from database import init_db, add_user, create_order, get_user, update_order_location, get_user_active_orders
+from database import init_db, add_user, create_order, get_user, update_order_location, get_user_active_orders, set_user_language
 from database import get_order
+from translations import get_text
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.request import HTTPXRequest
@@ -532,8 +533,8 @@ logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 
 # STATES
 # Add REG_GENDER between REG_BLOCK and REG_DORM to support GC Building flow
-REG_NAME, REG_ID, REG_BLOCK, REG_GENDER, REG_DORM, REG_PHONE = range(6)
-ORDER_REST, ORDER_ITEM, ORDER_CONFIRM, ORDER_LOCATION = range(5, 9)
+REG_LANGUAGE, REG_NAME, REG_ID, REG_BLOCK, REG_GENDER, REG_DORM, REG_PHONE = range(7)
+ORDER_REST, ORDER_ITEM, ORDER_CONFIRM, ORDER_LOCATION = range(7, 11)
 PICKUP_LOCATION, PICKUP_PROOF, DELIVERY_LOCATION, DELIVERY_PROOF, DELIVERY_CODE = range(
     9, 14)
 DEV_WAIT_LOC = 99
@@ -591,16 +592,32 @@ if not COMPLETED_ORDERS_CHANNEL_ID:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    # Check language first
+    user = get_user(user_id)
+    language = None
+    if user and len(user) > 10:
+        language = user[10]
+    
+    if not language:
+        language = context.user_data.get('language')
+
+    if not language:
+        await update.message.reply_text(
+            get_text('choose_lang', 'en'),
+            reply_markup=ReplyKeyboardMarkup([['English', 'Amharic']], one_time_keyboard=True, resize_keyboard=True)
+        )
+        return REG_LANGUAGE
+
+    context.user_data['language'] = language
+
     # Check if user is already registered
     if is_user_registered(user_id):
-        user = get_user(user_id)
         name = user[1] if user else "User"
 
         await update.message.reply_text(
-            f"Welcome back, {name}!\n"
-            "You are already registered and logged in.",
+            get_text('welcome_back', language).format(name=name),
             reply_markup=ReplyKeyboardMarkup(
-                [['Order Food'], ['Reset Registration']],
+                [[get_text('order_food', language)], [get_text('reset_reg', language)]],
                 one_time_keyboard=True,
                 resize_keyboard=True
             )
@@ -610,8 +627,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Not registered - Start Registration
     context.user_data['in_registration'] = True
     await update.message.reply_text(
-        "Welcome to BeDorme Food Delivery! Let's get you registered.\n \n"
-        "Please enter your Full Name (use the name on your ID):"
+        get_text('welcome_reg', language)
     )
     return REG_NAME
 
@@ -737,6 +753,43 @@ async def resume_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Let's start over. Please enter your Full Name (use the name on your ID):",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode='Markdown'
+    )
+    return REG_NAME
+
+
+async def reg_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    lang = 'en'
+    if 'Amharic' in text:
+        lang = 'am'
+    elif 'English' in text:
+        lang = 'en'
+    else:
+        await update.message.reply_text("Please select English or Amharic.")
+        return REG_LANGUAGE
+    
+    context.user_data['language'] = lang
+    
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    if user:
+         set_user_language(user_id, lang)
+         
+         name = user[1]
+         await update.message.reply_text(
+            get_text('welcome_back', lang).format(name=name),
+            reply_markup=ReplyKeyboardMarkup(
+                [[get_text('order_food', lang)], [get_text('reset_reg', lang)]],
+                one_time_keyboard=True,
+                resize_keyboard=True
+            )
+        )
+         return ConversationHandler.END
+    
+    context.user_data['in_registration'] = True
+    await update.message.reply_text(
+         get_text('welcome_reg', lang),
+         reply_markup=ReplyKeyboardRemove()
     )
     return REG_NAME
 
