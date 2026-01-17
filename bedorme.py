@@ -812,8 +812,8 @@ async def reg_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
     language = context.user_data.get('language', 'en')
 
-    # Must contain only alphabetic characters and spaces
-    if not re.match(r'^[A-Za-z ]+$', name):
+    # Must contain only alphabetic characters (Unicode supported) and spaces
+    if not name.replace(' ', '').isalpha():
         await update.message.reply_text(
             "Invalid input: all characters in the full name must be alphabetic letters and spaces.\n"
             "Please enter your Full Name (use the name on your ID):" if language == 'en' else "እባክዎ ትክክለኛ ሙሉ ስም ያስገቡ (መታወቂያዎ ላይ እንዳለው):"
@@ -920,10 +920,12 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if row:
         keyboard.append(row)
 
-    keyboard.append(['Back'])
+    keyboard.append(['Back' if language == 'en' else 'ተመለስ'])
+
+    msg = "Student ID accepted. Please choose your Block (or select a special area):" if language == 'en' else "መታወቂያ ተቀባይነት አግኝቷል። እባክዎ ብሎክ ይምረጡ (ወይም ልዩ ቦታ ይምረጡ):"
 
     await update.message.reply_text(
-        "Student ID accepted. Please choose your Block (or select a special area):",
+        msg,
         reply_markup=ReplyKeyboardMarkup(
             keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
@@ -932,103 +934,34 @@ async def reg_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reg_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-
-    # If user selected the special NEWYORK area, show a list of NewYork-area blocks
-    if text == 'NEWYORK':
-        ny_blocks = context.bot_data.get('newyork_blocks')
-        if not ny_blocks:
-            # filler choices for now (random numbers below 15)
-            ny_blocks = [f"Block {random.randint(1, 14)}" for _ in range(6)]
-            context.bot_data['newyork_blocks'] = ny_blocks
-
-        kb = [[b] for b in ny_blocks]
-        kb.append(['Back'])
-        await update.message.reply_text("Select the NewYork block:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
-        return REG_BLOCK
-
-    # If user selected the GC area, ask for gender first
-    if text == 'Around GC Building':
-        await update.message.reply_text("Please select your Gender:", reply_markup=ReplyKeyboardMarkup([['Male', 'Female']], one_time_keyboard=True, resize_keyboard=True))
-        return REG_GENDER
-
-    # Otherwise assume this is the final block selection
-    # Handle Back selection: go back to Student ID entry
-    if text.lower() == 'back':
-        await update.message.reply_text("Please re-enter your Student ID:", reply_markup=ReplyKeyboardMarkup([['Back']], one_time_keyboard=True, resize_keyboard=True))
-        return REG_ID
-
-    context.user_data['block'] = text
-    await update.message.reply_text(
-        "Please input accurate information to avoid delivery issues.\n\n"
-        "Enter your Dorm Number:")
-    return REG_DORM
-
-
-async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.lower() == 'back':
-        # go back to block selection
-        special = ['NEWYORK', 'Around GC Building']
-        try:
-            known = list(BLOCKS.keys())
-        except Exception:
-            known = []
-        keyboard = [special]
-        row = []
-        for b in known[:6]:
-            row.append(b)
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-        keyboard.append(['Back'])
-        await update.message.reply_text("Select your Block:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
-        return REG_BLOCK
-
-    context.user_data['dorm'] = text
-    # Reset attempts here so they always get 5 fresh tries
-    context.user_data['phone_attempts'] = 0
-    await update.message.reply_text("Finally, enter your Phone Number (starting with 09, 07, +2519, or +2517):")
-    return REG_PHONE
-
-
-async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle gender selection for 'Around GC Building' flow and present block choices."""
-    gender = update.message.text.strip().lower()
-    if gender.lower() == 'back':
-        # go back to block selection
-        # rebuild block keyboard
-        special = ['NEWYORK', 'Around GC Building']
-        try:
-            known = list(BLOCKS.keys())
-        except Exception:
-            known = []
-        keyboard = [special]
-        row = []
-        for b in known[:6]:
-            row.append(b)
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-async def reg_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    block = update.message.text.strip()
     language = context.user_data.get('language', 'en')
 
-    # Add back button check for block
-    if block.lower() == 'back' or block == 'ተመለስ':
-        # Determine previous state (ID was input)
+    # Handle Back
+    if text.lower() == 'back' or text == 'ተመለስ':
         context.user_data.pop('student_id', None)
         await update.message.reply_text(
              get_text('enter_id', language).format(name=context.user_data.get('name')),
             reply_markup=ReplyKeyboardMarkup([['Back' if language == 'en' else 'ተመለስ']], one_time_keyboard=True, resize_keyboard=True)
         )
         return REG_ID
-        
-    context.user_data['block'] = block
 
-    # Ask for Gender if Block is 'GC Building'
-    if block == 'GC Building':
+    # Handle NEWYORK
+    if text == 'NEWYORK':
+        ny_blocks = context.bot_data.get('newyork_blocks')
+        if not ny_blocks:
+            ny_blocks = [f"Block {random.randint(1, 14)}" for _ in range(6)]
+            context.bot_data['newyork_blocks'] = ny_blocks
+
+        kb = [[b] for b in ny_blocks]
+        if ['Back' if language == 'en' else 'ተመለስ'] not in kb:
+            kb.append(['Back' if language == 'en' else 'ተመለስ'])
+        
+        await update.message.reply_text("Select the NewYork block:" if language == 'en' else "የኒውዮርክ ብሎክ ይምረጡ:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
+        # We stay in REG_BLOCK because the user simply selects a block from the new list next
+        return REG_BLOCK
+
+    # Handle GC Building (exact string match from reg_id)
+    if text == 'Around GC Building':
         await update.message.reply_text(
             get_text('select_gender', language),
             reply_markup=ReplyKeyboardMarkup(
@@ -1039,7 +972,7 @@ async def reg_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return REG_GENDER
 
-    # Otherwise ask for dorm
+    context.user_data['block'] = text
     await update.message.reply_text(
         get_text('enter_dorm', language),
         reply_markup=ReplyKeyboardMarkup(
@@ -1051,7 +984,6 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender_input = update.message.text.strip()
     language = context.user_data.get('language', 'en')
     
-    # Map Amharic to English standard values
     gender_map = {
         'ተመለስ': 'back',
         'ወንድ': 'male',
@@ -1061,12 +993,15 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gender = gender_map.get(gender_input, gender_input.lower())
 
     if gender == 'back':
-        # Re-show block selection
-        blocks = BLOCKS
-        # ... (recreate block keyboard logic if specific layout needed, otherwise simple listing)
-        keyboard = []
+        # Re-show block selection (including special buttons)
+        special = ['NEWYORK', 'Around GC Building']
+        try:
+            known = list(BLOCKS.keys())
+        except Exception:
+            known = []
+        keyboard = [special]
         row = []
-        for b in blocks:
+        for b in known[:6]:
             row.append(b)
             if len(row) == 2:
                 keyboard.append(row)
@@ -1074,6 +1009,7 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if row:
             keyboard.append(row)
         keyboard.append(['Back' if language == 'en' else 'ተመለስ'])
+        
         await update.message.reply_text(get_text('enter_block', language), reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
         return REG_BLOCK
 
@@ -1085,7 +1021,8 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return REG_GENDER
 
     context.user_data['gender'] = gender.capitalize()
-    # Use the explicit GC-area block names provided by the user for both genders
+    
+    # Store dynamic blocks
     gc_blocks = [
         "Arctecture/ Civil block",
         "water_block",
@@ -1096,19 +1033,15 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     key = 'gc_male_blocks' if gender == 'male' else 'gc_female_blocks'
-    # store the same list for both genders so it's available later
     context.bot_data.setdefault(key, gc_blocks)
     blocks = context.bot_data[key]
 
     kb = [[b] for b in blocks]
-    # ensure a single Back row is present
     if ['Back' if language == 'en' else 'ተመለስ'] not in kb:
         kb.append(['Back' if language == 'en' else 'ተመለስ'])
     
     await update.message.reply_text(get_text('enter_block', language), reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
-    # Next message will be handled by reg_block which will store the chosen block
     return REG_BLOCK
-
 
 async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dorm = update.message.text.strip()
@@ -1130,6 +1063,7 @@ async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
          return REG_BLOCK
 
     context.user_data['dorm'] = dorm
+    context.user_data['phone_attempts'] = 0
     await update.message.reply_text(
         get_text('enter_phone', language),
         reply_markup=ReplyKeyboardMarkup([['Back' if language == 'en' else 'ተመለስ']], one_time_keyboard=True, resize_keyboard=True)
