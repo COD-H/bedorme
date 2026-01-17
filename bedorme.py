@@ -11,7 +11,7 @@ from database import init_db, add_user, create_order, get_user, update_order_loc
 from database import get_order
 from translations import get_text
 from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
 from telegram.request import HTTPXRequest
 from dotenv import load_dotenv
 import string
@@ -689,9 +689,6 @@ async def resume_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
     )
     return ORDER_ITEM
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-    )
-    return ORDER_ITEM
 
 
 async def resume_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1215,6 +1212,11 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
             block=user_data['block'],
             dorm=user_data['dorm'],
             phone=user_data['phone']
+        ),
+        reply_markup=ReplyKeyboardMarkup(
+            [[get_text('order_food', user_language)]], 
+            one_time_keyboard=True, 
+            resize_keyboard=True
         )
     )
 
@@ -1500,13 +1502,51 @@ async def force_arrival_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    choice = update.message.text.replace(" (Premium)", "")
+    text = update.message.text
+    # Sanitize input: strip whitespace
+    choice = text.strip().replace(" (Premium)", "")
+
+    # Manual mapping for Amharic or variations if needed
+    # (Currently the buttons are just keys from MENUS, but if menus change to localized names, map here)
+    # The user says "Wesen" (restaurant) is invalid.
+    # Check if "Wesen" matches exactly "Wesen" in MENUS keys.
+    # MENUS keys are: "Zebra", "Selam", "Promy", "Edget", "Fele", "Wesen", "Webete", "Darek"
+    
+    # Debug print
+    # print(f"DEBUG: User chose {choice}, keys are {list(MENUS.keys())}")
+
     if choice not in MENUS:
-        # Check if 'Resume Order' or 'Back' type commands were sent
-        # No simple solution for translated buttons if we don't map them back
-        # For now assume user clicks buttons provided
-        await update.message.reply_text("Please select a valid restaurant.")
-        return ORDER_REST
+        # Check if it was a valid choice but maybe case sensitive?
+        # Let's try case-insensitive match
+        found = None
+        for k in MENUS:
+            if k.lower() == choice.lower():
+                found = k
+                break
+        
+        if found:
+            choice = found
+        else:
+             # Check if 'Resume Order' or 'Back' type commands were sent
+            language = context.user_data.get('language', 'en')
+            knames = ", ".join(list(MENUS.keys()))
+            
+            # Dynamic keyboard from MENUS keys
+            keyboard = []
+            row = []
+            for name in MENUS.keys():
+                row.append(name)
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+            
+            await update.message.reply_text(
+                f"Please select a valid restaurant.\nOptions: {knames}",
+                 reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+            )
+            return ORDER_REST
     
     # Store clean choice
     context.user_data['restaurant'] = choice
@@ -1549,8 +1589,25 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ORDER_ITEM
 
     # --- YOUR ORIGINAL STRUCTURE (INTACT) ---
-    item_name = text.split(" - ")[0]
-    price = float(text.split(" - ")[1].replace(" ETB", ""))
+    try:
+        parts = text.split(" - ")
+        if len(parts) < 2:
+            raise ValueError("Invalid format")
+            
+        item_name = parts[0]
+        # Robustly handle price string like "70.0 ETB" or just "70"
+        price_str = parts[1].replace(" ETB", "").strip()
+        price = float(price_str)
+    except Exception:
+        # Invalid input fallback
+        await update.message.reply_text(
+            "⚠️ Invalid selection. Please use the buttons provided.",
+            reply_markup=ReplyKeyboardMarkup(
+                [[f"{item} - {price} ETB"] for item,
+                    price in MENUS.get(context.user_data.get('restaurant'), {}).items()],
+                one_time_keyboard=True, resize_keyboard=True)
+        )
+        return ORDER_ITEM
 
     # Use list of orders structure
     if 'orders' not in context.user_data:
@@ -1606,52 +1663,43 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2. VALID: User clicks 'Add More Orders' -> Loop back to restaurant selection
     if action == 'add_more':
-
-        # Store this order in a list of orders
-        order = {
-            'restaurant': context.user_data.get('restaurant'),
-            'item': context.user_data.get('item'),
-            'price': context.user_data.get('price')
-        }
-        if 'orders' not in context.user_data:
-            context.user_data['orders'] = []
-        context.user_data['orders'].append(order)
+        # Order is already added in order_item handler. Just proceed.
         context.user_data['multi_ordering'] = True
+        
+        # Dynamic keyboard from MENUS keys
+        keyboard = []
+        row = []
+        for name in MENUS.keys():
+            row.append(name)
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+            
         await update.message.reply_text(
-            "Add another order! Please choose a restaurant:",
-            reply_markup=ReplyKeyboardMarkup(
-                [['Fle', 'Zebra'],
-                 ['Wesen', 'Selam'],
-                 ['Webete (Premium)', 'Darek (Premium)']], one_time_keyboard=True, resize_keyboard=True)
+            get_text('resume_rest', language),
+            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
         )
         return ORDER_REST
 
     # 3. VALID: User clicks 'I'm Done Ordering' -> Show all orders with confirm and cancel buttons
-    elif text == "I'm Done Ordering":
-        # Add the current pending order to the list so it's included
-        order = {
-            'restaurant': context.user_data.get('restaurant'),
-            'item': context.user_data.get('item'),
-            'price': context.user_data.get('price')
-        }
-        if 'orders' not in context.user_data:
-            context.user_data['orders'] = []
-        context.user_data['orders'].append(order)
-
+    elif action == 'done':
+        # Order is already added in order_item handler. Just proceed.
         orders = context.user_data.get('orders', [])
-
-        summary = "You are about to confirm the following orders:\n\n"
+        
+        summary = get_text('confirm_summary', language)
         total = 0
         for idx, o in enumerate(orders, 1):
             summary += f"{idx}. {o['restaurant']} - {o['item']} ({o['price']} ETB)\n"
             total += o['price']
-        summary += f"\nTotal: {total} ETB"
-        summary += "\nIf you want to remove an order, tap its cancel button below."
+        summary += get_text('total', language).format(total=total)
+        summary += get_text('remove_order', language)
 
         # Build cancel buttons for each order
-        cancel_buttons = [[f'Cancel Order {i+1}'] for i in range(len(orders))]
+        cancel_buttons = [[get_text('cancel_order_btn', language).format(i=i+1)] for i in range(len(orders))]
         # Add confirm button at the bottom
-        cancel_buttons.append(['Confirm'])
+        cancel_buttons.append([get_text('confirm', language)])
         await update.message.reply_text(
             summary,
             reply_markup=ReplyKeyboardMarkup(
@@ -1662,19 +1710,38 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ORDER_CONFIRM
 
     # 4. VALID: User clicks 'Cancel Order X' in multi-order summary
-    elif text.startswith('Cancel Order '):
-        idx = int(text.replace('Cancel Order ', '')) - 1
+    elif action == 'remove_item_pressed':
+        # Extract number from text (works for both English and Amharic if digits are used)
+        try:
+            match = re.search(r'\d+', text)
+            if match:
+                idx = int(match.group()) - 1
+            else:
+                idx = -1
+        except Exception:
+            idx = -1
+
         orders = context.user_data.get('orders', [])
         if 0 <= idx < len(orders):
             cancelled = orders.pop(idx)
             context.user_data['orders'] = orders
-            summary = "Order cancelled.\n\nYou are about to confirm the following orders:\n\n"
+            
+            summary = get_text('confirm_summary', language)
+            total = 0
             for i, o in enumerate(orders, 1):
                 summary += f"{i}. {o['restaurant']} - {o['item']} ({o['price']} ETB)\n"
-            summary += "\nIf you want to remove an order, tap its cancel button below."
-            cancel_buttons = [[f'Cancel Order {i+1}']
-                              for i in range(len(orders))]
-            cancel_buttons.append(['Confirm'])
+                total += o['price']
+            
+            if not orders:
+                summary += "\nNo orders remaining."
+                cancel_buttons = [[get_text('add_more', language)], [get_text('cancel', language)]]
+            else:
+                summary += get_text('total', language).format(total=total)
+                summary += get_text('remove_order', language)
+                cancel_buttons = [[get_text('cancel_order_btn', language).format(i=i+1)]
+                                  for i in range(len(orders))]
+                cancel_buttons.append([get_text('confirm', language)])
+            
             await update.message.reply_text(
                 summary,
                 reply_markup=ReplyKeyboardMarkup(
@@ -1686,16 +1753,16 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "Invalid cancel selection.",
                 reply_markup=ReplyKeyboardMarkup(
-                    [[f'Cancel Order {i+1}']
-                        for i in range(len(orders))] + [['Confirm']],
+                    [[get_text('confirm', language), get_text('add_more', language)]],
                     one_time_keyboard=True, resize_keyboard=True),
                 parse_mode='Markdown'
             )
             return ORDER_CONFIRM
 
     # 5. VALID: User clicks 'Cancel' -> Ends the conversation
-    elif text == 'Cancel':
-        await update.message.reply_text("Order cancelled.", reply_markup=ReplyKeyboardRemove())
+    elif text == get_text('cancel', language) or text == 'Cancel':
+        return await cancel(update, context)
+
         return ConversationHandler.END
 
     # 6. INVALID PARAMETER: User types anything else
@@ -1884,123 +1951,7 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         return ORDER_LOCATION
-                      f"Phone: {customer[5]}\n"
-                      f"Restaurant: {details['restaurant']}\n"
-                      f"Item: {details['item']} | Price: {details['price']} ETB\n"
-                      f"Verification Code: {code}"),
-                reply_markup=kb)
-            # store admin order state so callbacks can edit it later
-            admin_orders = context.bot_data.setdefault('admin_orders', {})
-            admin_orders[order_id] = {
-                'message_id': sent_admin.message_id, 'accepted': False, 'about_to_pay': False}
-        except Exception as e:
-            logger.error(f"Failed to notify admin: {e}")
 
-        await message.reply_text(f"Order #{order_id} placed successfully! Code: {code}", reply_markup=ReplyKeyboardRemove())
-
-        # Send an inline Cancel Order button
-        try:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "Cancel Order", callback_data=f"cancel_order_{order_id}")]])
-            sent_cancel = await context.bot.send_message(chat_id=user_id, text="If you wish to cancel your order, press below:", reply_markup=kb)
-            # store user's cancel-button message id so we can remove it if admin proceeds to purchase
-            user_cancel_msgs = context.bot_data.setdefault(
-                'user_cancel_msgs', {})
-            user_cancel_msgs[order_id] = {
-                'chat_id': user_id, 'message_id': sent_cancel.message_id}
-        except Exception:
-            pass
-
-        return ConversationHandler.END
-
-    elif text == 'My Location':
-        await message.reply_text(
-            "To share your live location:\n"
-            "1. Tap the paperclip icon 📎 (or +).\n"
-            "2. Select **Location** 📍.\n"
-            "3. Select **'Share My Live Location'**.\n"
-            "4. Choose **'Until I turn it off'**.\n\n"
-            "This helps the deliverer find you exactly where you are!",
-            parse_mode='Markdown'
-        )
-        return ORDER_LOCATION  # Stay in state until location received
-
-    elif message.location:
-        lat = message.location.latitude
-        lon = message.location.longitude
-        # Ask admin group to verify location
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "Accept", callback_data=f"admin_verify_location_yes_{update.effective_user.id}_{lat}_{lon}"),
-                InlineKeyboardButton(
-                    "Reject", callback_data=f"admin_verify_location_no_{update.effective_user.id}_{lat}_{lon}")
-            ]
-        ])
-        await update.message.reply_text("Location uploaded! Waiting for admin verification...")
-        await context.bot.send_location(
-            chat_id=ADMIN_CHAT_ID,
-            latitude=lat,
-            longitude=lon
-        )
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=f"User {update.effective_user.full_name} (ID: {update.effective_user.id}) uploaded a location for their order. Accept this location?",
-            reply_markup=kb
-        )
-        # Store location in user_data for later
-        context.user_data['pending_location'] = (lat, lon)
-
-        # Store pending order details in bot_data so we can access it in the callback
-        details = get_combined_order_details(context)
-        context.bot_data[f'pending_order_{update.effective_user.id}'] = details
-
-        return ORDER_LOCATION
-
-    # Handle cancel options
-    elif context.user_data.get('cancel_ready') and text:
-        orders = context.user_data.get('orders', [])
-        user = get_user(update.effective_user.id)
-        user_info = f"Name: {user[1]}\nPhone: {user[5]}\nStudent ID: {user[2]}\nBlock/Dorm: {user[3]} / {user[4]}"
-        if text == 'Cancel All Orders':
-            # Notify admin
-            order_list = '\n'.join(
-                [f"{i+1}. {o['restaurant']} - {o['item']} ({o['price']} ETB)" for i, o in enumerate(orders)])
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=f"User is trying to cancel ALL orders:\n{user_info}\nOrders:\n{order_list}"
-            )
-            await message.reply_text("All orders cancelled.", reply_markup=ReplyKeyboardRemove())
-            context.user_data.clear()
-            return ConversationHandler.END
-        elif text.startswith('Cancel Order '):
-            idx = int(text.replace('Cancel Order ', '')) - 1
-            if 0 <= idx < len(orders):
-                cancelled = orders.pop(idx)
-                order_list = '\n'.join(
-                    [f"{i+1}. {o['restaurant']} - {o['item']} ({o['price']} ETB)" for i, o in enumerate(orders)])
-                await context.bot.send_message(
-                    chat_id=ADMIN_CHAT_ID,
-                    text=f"User is trying to cancel order {idx+1}:\n{user_info}\nCancelled: {cancelled['restaurant']} - {cancelled['item']} ({cancelled['price']} ETB)\nRemaining Orders:\n{order_list if order_list else 'None'}"
-                )
-                if orders:
-                    # Show updated cancel options
-                    cancel_buttons = [
-                        [f'Cancel Order {i+1}'] for i in range(len(orders))]
-                    cancel_buttons.append(['Cancel All Orders'])
-                    # Add Place Order back
-                    cancel_buttons.insert(0, ['Place Order'])
-                    await message.reply_text(
-                        "Order cancelled. If you wish to cancel more, choose below:",
-                        reply_markup=ReplyKeyboardMarkup(
-                            cancel_buttons, one_time_keyboard=True, resize_keyboard=True)
-                    )
-                    context.user_data['orders'] = orders
-                    return ORDER_LOCATION
-                else:
-                    await message.reply_text("All orders cancelled.", reply_markup=ReplyKeyboardRemove())
-                    context.user_data.clear()
-                    return ConversationHandler.END
 # --- Admin verifies user-uploaded location ---
 
 
@@ -2112,7 +2063,25 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
             except Exception as e:
                 logger.warning(f"Failed to send new order to admin chat: {e}")
 
-            await context.bot.send_message(chat_id=user_id, text=f"Order Placed! Admin will review your order.\n\nIMPORTANT: Your verification code is *{code}*. Keep it safe.", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
+            # Get user language for "Order Food" button
+            cust_lang = 'en'
+            try:
+                cust_info = get_user(user_id)
+                if cust_info and len(cust_info) > 10:
+                    cust_lang = cust_info[10]
+            except Exception:
+                pass
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"Order Placed! Admin will review your order.\n\nIMPORTANT: Your verification code is *{code}*. Keep it safe.",
+                parse_mode='Markdown',
+                reply_markup=ReplyKeyboardMarkup(
+                    [[get_text('order_food', cust_lang)]],
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+            )
 
             # Send an inline Cancel Order button that prompts the user to re-enter their name if clicked
             try:

@@ -85,7 +85,8 @@ TRANSLATIONS = {
         'cancel_order_prompt': "ትዕዛዝዎን መሰረዝ ከፈለጉ፣ ከታች ይጫኑ:",
         'cancel_order_button': "ትዕዛዝ ሰርዝ",
         'resume_order': "ትዕዛዝ ቀጥል"
-    } -> TRANSLATIONS['am']
+    }
+
 }
 
 def get_text(key, lang='en'):
