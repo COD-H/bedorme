@@ -118,6 +118,9 @@ async def admin_reject_proof_callback(update: Update, context: ContextTypes.DEFA
         return
     await query.answer()
     parts = query.data.split("_")
+    if len(parts) < 5:
+        await query.edit_message_text("Invalid callback data.")
+        return
     order_id = int(parts[3])
     user_id = int(parts[4])
 
@@ -144,6 +147,9 @@ async def admin_req_receipt_callback(update: Update, context: ContextTypes.DEFAU
         return
     await query.answer()
     parts = query.data.split("_")
+    if len(parts) < 5:
+        await query.edit_message_text("Invalid callback data.")
+        return
     order_id = int(parts[3])
     user_id = int(parts[4])
 
@@ -381,6 +387,8 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
+    if len(parts) < 3:
+        return
     order_id = int(parts[1])
     rating = int(parts[2])
 
@@ -445,7 +453,7 @@ async def admin_user_paid_callback(update: Update, context: ContextTypes.DEFAULT
         return
     await query.answer()
     parts = query.data.split("_")
-    if len(parts) < 5:
+    if len(parts) < 6:
         await query.edit_message_text("Invalid callback data.")
         return
     order_id = int(parts[4])
@@ -1395,6 +1403,9 @@ async def force_arrival_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
     await query.answer()
     parts = query.data.split("_")
+    if len(parts) < 4:
+        await query.edit_message_text("Invalid callback data.")
+        return
     order_id = int(parts[2])
     user_id = int(parts[3])
 
@@ -1617,7 +1628,18 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ORDER_REST
 
-    # 3. VALID: User clicks 'I'm Done Ordering' -> Show all orders with confirm and cancel buttons
+    # 3. VALID: User clicks 'Confirm' -> Ask for location
+    elif action == 'confirm':
+        await update.message.reply_text(
+            get_text('share_loc', language),
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton(get_text('share_loc_btn', language), request_location=True)]],
+                one_time_keyboard=True, resize_keyboard=True
+            )
+        )
+        return ORDER_LOCATION
+
+    # 4. VALID: User clicks 'I'm Done Ordering' -> Show all orders with confirm and cancel buttons
     elif action == 'done':
         # Order is already added in order_item handler. Just proceed.
         orders = context.user_data.get('orders', [])
@@ -1643,7 +1665,7 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['multi_ordering'] = False
         return ORDER_CONFIRM
 
-    # 4. VALID: User clicks 'Cancel Order X' in multi-order summary
+    # 5. VALID: User clicks 'Cancel Order X' in multi-order summary
     elif action == 'remove_item_pressed':
         # Extract number from text (works for both English and Amharic if digits are used)
         try:
@@ -1693,13 +1715,13 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ORDER_CONFIRM
 
-    # 5. VALID: User clicks 'Cancel' -> Ends the conversation
+    # 6. VALID: User clicks 'Cancel' -> Ends the conversation
     elif text == get_text('cancel', language) or text == 'Cancel':
         return await cancel(update, context)
 
         return ConversationHandler.END
 
-    # 6. INVALID PARAMETER: User types anything else
+    # 7. INVALID PARAMETER: User types anything else
     else:
         # Show correct buttons depending on state
         if context.user_data.get('multi_ordering'):
@@ -1896,7 +1918,7 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
         return
     await query.answer()
     parts = query.data.split("_")
-    if len(parts) < 6:
+    if len(parts) < 7:
         await query.edit_message_text("Invalid callback data.")
         return
     action = parts[3]
@@ -2335,6 +2357,9 @@ async def confirm_cancel_order_callback(update: Update, context: ContextTypes.DE
     query = update.callback_query
     await query.answer()
     parts = query.data.split("_")
+    if len(parts) < 4:
+        # Just ignore or log
+        return
     order_id = int(parts[3])
     user_id = query.from_user.id
 
