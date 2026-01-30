@@ -3,7 +3,7 @@
 import time
 import math
 import asyncio
-from keep_alive import keep_alive  # Import keep_alive
+from keep_alive import keep_alive, start_pinger  # Import keep_alive
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
 
 from menus import MENUS
@@ -3072,6 +3072,10 @@ def main():
             webhook_url = webhook_url[:-1]
 
         logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
+        
+        # Start pinger to keep the service alive
+        start_pinger(webhook_url)
+
         application.run_webhook(
             listen="0.0.0.0",
             port=port,

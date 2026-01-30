@@ -26,8 +26,10 @@ def run():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-def ping_job():
-    url = "https://bedorme-1hb2.onrender.com"
+def ping_job(url=None):
+    if not url:
+        url = "https://bedorme-1hb2.onrender.com"
+        
     while True:
         try:
             logging.info(f"Pinging {url}...")
@@ -36,9 +38,14 @@ def ping_job():
             logging.error(f"Ping failed: {e}")
         time.sleep(7 * 60) # 7 minutes
 
+def start_pinger(url=None):
+    p = Thread(target=ping_job, args=(url,))
+    p.daemon = True
+    p.start()
+
 def keep_alive():
     t = Thread(target=run)
+    t.daemon = True
     t.start()
     
-    p = Thread(target=ping_job)
-    p.start()
+    start_pinger()
