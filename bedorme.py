@@ -54,12 +54,23 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
         elif clean_username == "allowned":
             account_number = "1000397137833"
 
+    # Fetch order to show price
+    try:
+        from database import get_order
+        p_order = get_order(order_id)
+        # Price is typically float or int, at index 5
+        price_val = p_order[5] if p_order else "???"
+    except Exception:
+        price_val = "???"
+
     # Notify user to start payment process and upload proof
     await context.bot.send_message(
         chat_id=user_id,
         text=(f"Start the payment process for order #{order_id} to the account {account_number} CBE account.\n"
+              f"**Total Amount to Transfer: {price_val} ETB**\n"
               "Only complete transferring after you have verified the package.\n\n"
-              "📸 **Please upload a screenshot/photo of the payment proof here.**")
+              "📸 **Please upload a screenshot/photo of the payment proof here.**"),
+        parse_mode='Markdown'
     )
 
     # Set state for this user to expect payment proof
@@ -1248,9 +1259,13 @@ async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(row)
 
     await update.message.reply_text(
+        "ℹ️ **Delivery Fee Notice**\n"
+        "A delivery fee of **15 ETB per item** will be added to your total order price.\n"
+        "(e.g. 1 item = +15 ETB, 2 items = +30 ETB)\n\n" +
         get_text('choose_rest', language),
         reply_markup=ReplyKeyboardMarkup(
-            keyboard, one_time_keyboard=True, resize_keyboard=True)
+            keyboard, one_time_keyboard=True, resize_keyboard=True),
+        parse_mode='Markdown'
     )
     return ORDER_REST
 
@@ -1645,11 +1660,19 @@ async def order_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         orders = context.user_data.get('orders', [])
         
         summary = get_text('confirm_summary', language)
-        total = 0
+        items_total = 0
         for idx, o in enumerate(orders, 1):
             summary += f"{idx}. {o['restaurant']} - {o['item']} ({o['price']} ETB)\n"
-            total += o['price']
-        summary += get_text('total', language).format(total=total)
+            items_total += o['price']
+        
+        num_items = len(orders)
+        delivery_fee = num_items * 15
+        grand_total = items_total + delivery_fee
+        
+        summary += f"\nItems Total: {items_total} ETB"
+        summary += f"\nDelivery Fee ({num_items} items x 15): {delivery_fee} ETB"
+        summary += f"\n**Grand Total: {grand_total} ETB**\n\n"
+        
         summary += get_text('remove_order', language)
 
         # Build cancel buttons for each order
@@ -1754,10 +1777,12 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         orders = ctx.user_data.get('orders', [])
         if not orders:
             # Fallback
+            p = ctx.user_data.get('price', 0)
+            # Apply 15 fee to fallback single item too
             return {
                 'restaurant': ctx.user_data.get('restaurant'),
                 'item': ctx.user_data.get('item'),
-                'price': ctx.user_data.get('price')
+                'price': p + 15 
             }
 
         restaurants = set(o['restaurant'] for o in orders)
@@ -1765,7 +1790,10 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         items_str = ", ".join(
             [f"{o['item']} ({o['restaurant']})" for o in orders])
-        total_price = sum(o['price'] for o in orders)
+        
+        items_total = sum(o['price'] for o in orders)
+        delivery_fee = len(orders) * 15
+        total_price = items_total + delivery_fee
 
         return {
             'restaurant': restaurant_str,
