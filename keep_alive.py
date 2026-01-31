@@ -28,7 +28,8 @@ def run():
 
 def ping_job(url=None):
     if not url:
-        url = "https://bedorme-1hb2.onrender.com"
+        # Load from env or fallback
+        url = os.environ.get("PING_URL", "https://bedorme-ydk8.onrender.com")
         
     while True:
         try:

@@ -4,6 +4,7 @@ import psycopg2
 from urllib.parse import urlparse
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_PATH = os.path.join(os.path.dirname(__file__), 'bedorme.db')
 
 def get_db_connection():
     if DATABASE_URL:
@@ -12,14 +13,15 @@ def get_db_connection():
         return conn
     else:
         # SQLite connection
-        conn = sqlite3.connect('bedorme.db')
+        conn = sqlite3.connect(DB_PATH)
         return conn
+
 
 def execute_query(conn, query, params=()):
     if DATABASE_URL:
         # Postgres uses %s placeholder
         query = query.replace('?', '%s')
-    
+
     cur = conn.cursor()
     cur.execute(query, params)
     return cur
@@ -46,6 +48,7 @@ def init_db():
                         block TEXT, 
                         dorm_number TEXT, 
                         phone TEXT, 
+                        gender TEXT,
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
                         tokens INTEGER DEFAULT 0,
@@ -75,22 +78,23 @@ def init_db():
                         block TEXT, 
                         dorm_number TEXT, 
                         phone TEXT, 
+                        gender TEXT,
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
                         tokens INTEGER DEFAULT 0,
                         language TEXT DEFAULT NULL)''')
 
-            # Migration to add username column if it doesn't exist (for existing databases)
-            try:
-                execute_query(conn, "ALTER TABLE users ADD COLUMN username TEXT")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-            # Migration to add language column if it doesn't exist
-            try:
-                execute_query(conn, "ALTER TABLE users ADD COLUMN language TEXT DEFAULT NULL")
-            except sqlite3.OperationalError:
-                pass
+            # Migration: Robustly add columns if they don't exist
+            columns_to_add = [
+                ("username", "TEXT"),
+                ("language", "TEXT DEFAULT NULL"),
+                ("gender", "TEXT")
+            ]
+            for col_name, col_type in columns_to_add:
+                try:
+                    execute_query(conn, f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
 
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS orders
                         (order_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,7 +121,7 @@ def init_db():
         conn.close()
 
 
-def add_user(user_id, username, name, student_id, block, dorm_number, phone):
+def add_user(user_id, username, name, student_id, block, dorm_number, phone, gender=None):
     conn = get_db_connection()
     try:
         # Check if user exists to preserve balance/tokens/role if we are just updating info
@@ -128,12 +132,12 @@ def add_user(user_id, username, name, student_id, block, dorm_number, phone):
         if existing:
             balance, tokens, is_deliverer = existing
             execute_query(conn, """UPDATE users 
-                        SET username=?, name=?, student_id=?, block=?, dorm_number=?, phone=? 
+                        SET username=?, name=?, student_id=?, block=?, dorm_number=?, phone=?, gender=? 
                         WHERE user_id=?""",
-                    (username, name, student_id, block, dorm_number, phone, user_id))
+                    (username, name, student_id, block, dorm_number, phone, gender, user_id))
         else:
-            execute_query(conn, "INSERT INTO users (user_id, username, name, student_id, block, dorm_number, phone) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (user_id, username, name, student_id, block, dorm_number, phone))
+            execute_query(conn, "INSERT INTO users (user_id, username, name, student_id, block, dorm_number, phone, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, username, name, student_id, block, dorm_number, phone, gender))
 
         conn.commit()
     finally:

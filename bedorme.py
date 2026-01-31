@@ -3,15 +3,23 @@
 import time
 import math
 import asyncio
-from keep_alive import keep_alive, start_pinger  # Import keep_alive
+from keep_alive import keep_alive, start_pinger
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
-
 from menus import MENUS
-from database import init_db, add_user, create_order, get_user, update_order_location, get_user_active_orders, set_user_language
-from database import get_order
+from database import (
+    init_db, add_user, create_order, get_user, update_order_location,
+    get_user_active_orders, set_user_language, get_user_language, get_order,
+    mark_order_complete, save_rating
+)
 from translations import get_text
-from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    Application, CommandHandler, ContextTypes, ConversationHandler,
+    MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
+)
+from telegram import (
+    Update, ReplyKeyboardMarkup, ReplyKeyboardRemove,
+    InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton
+)
 from telegram.request import HTTPXRequest
 from dotenv import load_dotenv
 import string
@@ -21,6 +29,11 @@ import os
 import logging
 import sqlite3
 
+# Load environment variables from .env file
+load_dotenv()
+
+# TOKEN (now loaded from .env)
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin confirms they have seen the user (within 50m)."""
@@ -38,25 +51,28 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
 
     # Determine account number based on admin username
     admin_username = query.from_user.username
-    # Default account (fallback)
-    account_number = "1000397137833"
+    
+    # Default account variables loaded from ENV
+    acc_default = os.getenv("ACC_DEFAULT", "1000397137833")
+    acc_h_kara = os.getenv("ACC_H_KARASEFERIAN", "1000688588972")
+    acc_kal = os.getenv("ACC_KALNLISA", "1000466307371")
+    
+    account_number = acc_default
 
     if admin_username:
-        # Remove @ if present just in case, though API usually returns without it
-        clean_username = admin_username.lstrip('@')
+        # Standardize check (case-insensitive, strip @)
+        clean_username = admin_username.lstrip('@').lower()
 
-        if clean_username == "H_karaseferian":
-            account_number = "1000688588972"
-        elif clean_username == "@kalnlisa":  # TODO: Replace with Kal's username
-            account_number = "1000466307371"
-        elif clean_username == "callowned":
-            account_number = "1000397137833"
-        elif clean_username == "allowned":
-            account_number = "1000397137833"
+        if clean_username == "h_karaseferian":
+            account_number = acc_h_kara
+        elif clean_username == "kalnlisa":
+            account_number = acc_kal
+        elif clean_username in ["callowned", "allowned"]:
+            account_number = acc_default
 
     # Fetch order to show price
     try:
-        from database import get_order
+        # Already imported at top, usage is correct
         p_order = get_order(order_id)
         # Price is typically float or int, at index 5
         price_val = p_order[5] if p_order else "???"
@@ -64,14 +80,15 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
         price_val = "???"
 
     # Notify user to start payment process and upload proof
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=(f"Start the payment process for order #{order_id} to the account {account_number} CBE account.\n"
-              f"**Total Amount to Transfer: {price_val} ETB**\n"
-              "Only complete transferring after you have verified the package.\n\n"
-              "📸 **Please upload a screenshot/photo of the payment proof here.**"),
-        parse_mode='Markdown'
-    )
+    lang = get_user_language(user_id) or 'en'
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=get_text('pay_instruct', lang).format(order_id=order_id, account=account_number, price=price_val),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send payment instruct to user {user_id}: {e}")
 
     # Set state for this user to expect payment proof
     context.bot_data[f'waiting_payment_proof_{user_id}'] = order_id
@@ -118,7 +135,10 @@ async def handle_payment_proof(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Clear user waiting state
     del context.bot_data[f'waiting_payment_proof_{user_id}']
-    await update.message.reply_text("Payment proof sent! Waiting for admin verification.")
+    
+    from database import get_user_language
+    lang = get_user_language(user_id) or 'en'
+    await update.message.reply_text(get_text('payment_proof_sent', lang))
 
 
 async def admin_reject_proof_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,11 +155,14 @@ async def admin_reject_proof_callback(update: Update, context: ContextTypes.DEFA
     order_id = int(parts[3])
     user_id = int(parts[4])
 
+    from database import get_user_language
+    lang = get_user_language(user_id) or 'en'
+    
     # 1. Notify User
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text="❌ **Payment Proof Rejected**\n\nThe admin has marked your payment proof as invalid.\nPlease upload the correct payment screenshot again."
+            text=get_text('payment_rejected', lang)
         )
         # Re-enable waiting state for this user
         context.bot_data[f'waiting_payment_proof_{user_id}'] = order_id
@@ -204,7 +227,7 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     order_id = int(match.group(1))
 
     # Fetch order details from DB to get the user_id
-    from database import get_order
+    # Already imported at top
     order = get_order(order_id)
     if not order:
         return
@@ -213,17 +236,20 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
 
     photo = msg.photo[-1]
     file_id = photo.file_id
+    
+    from database import get_user_language
+    lang = get_user_language(user_id) or 'en'
 
     # 1. Forward receipt to user
     try:
-        await context.bot.send_message(chat_id=user_id, text=f"✅ Payment Verified! Here is your receipt for Order #{order_id}:")
+        await context.bot.send_message(chat_id=user_id, text=get_text('payment_verified', lang).format(order_id=order_id))
         await context.bot.send_photo(chat_id=user_id, photo=file_id)
     except Exception as e:
         logger.warning(f"Failed to send receipt to user: {e}")
 
     # 2. Mark order complete
     try:
-        from database import mark_order_complete, get_order, get_user
+        # Already imported at top
         mark_order_complete(order_id)
 
         # Retrieve User Proof
@@ -302,13 +328,7 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=(
-                "🛑 **Please Stop Sharing Your Live Location**\n\n"
-                "To protect your privacy and save battery:\n"
-                "1. Tap the 'Stop Sharing Location' bar at the top of this chat.\n"
-                "   OR\n"
-                "2. Tap the map in the chat and select 'Stop Sharing'."
-            ),
+            text=get_text('stop_live_loc', lang),
             parse_mode='Markdown'
         )
         # Wait 5 seconds
@@ -332,7 +352,7 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
 
         await context.bot.send_message(
             chat_id=user_id,
-            text="How was your delivery experience? Please rate us from 1 (Worst) to 10 (Best):",
+            text=get_text('rate_us', lang),
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     except Exception:
@@ -351,7 +371,7 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
         # We will simply send the final prompt to the user.
         await context.bot.send_message(
             chat_id=user_id,
-            text="✅ Order Complete!\n\nTo place a new order, click: /order\nTo restart main menu, click: /start"
+            text=get_text('order_complete_prompt', lang)
         )
     except Exception as e:
         logger.warning(
@@ -403,7 +423,7 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = int(parts[1])
     rating = int(parts[2])
 
-    from database import save_rating, get_order, get_user
+    # Already imported at top
     save_rating(order_id, rating)
 
     await query.edit_message_text(f"Thank you! You rated this order {rating}/10.")
@@ -446,95 +466,16 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await asyncio.sleep(3)
         user_id = query.from_user.id
+        from database import get_user_language
+        lang = get_user_language(user_id) or 'en'
         await context.bot.send_message(
             chat_id=user_id,
-            text="✅ Rating Submitted.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start"
+            text=get_text('rating_submitted', lang)
         )
     except Exception as e:
         logger.warning(f"Failed to send final prompt after rating: {e}")
 
 
-# --- Payment Confirmation Callback (Legacy/Fallback) ---
-
-
-async def admin_user_paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if update.effective_chat.id != ADMIN_CHAT_ID:
-        await query.answer("Unauthorized action.", show_alert=True)
-        return
-    await query.answer()
-    parts = query.data.split("_")
-    if len(parts) < 6:
-        await query.edit_message_text("Invalid callback data.")
-        return
-    order_id = int(parts[4])
-    user_id = int(parts[5])
-
-    # Mark order as complete in DB
-    try:
-        from database import mark_order_complete, get_order, get_user
-        mark_order_complete(order_id)
-    except Exception:
-        pass
-
-    # Notify both user and admin group
-    try:
-        await context.bot.send_message(chat_id=user_id, text=f"✅ Payment received! Your order #{order_id} is complete. Thank you for using BeDorme.")
-        await context.bot.send_message(chat_id=user_id, text="If you shared your live location for this order, please stop sharing it now for your privacy and to save resources. Thank you!")
-    except Exception:
-        pass
-    try:
-        await query.edit_message_text(f"Order #{order_id} marked as complete. Payment confirmed.")
-    except Exception:
-        pass
-
-    # Send completed order info to DB group
-    try:
-        DB_GROUP_CHAT_ID = -1003306702660
-        order = get_order(order_id)
-        user = get_user(user_id)
-        if order and user:
-            order_info = (
-                f"Order Complete!\n"
-                f"Order ID: {order[0]}\n"
-                f"Customer: {user[1]} (ID: {user[0]})\n"
-                f"Student ID: {user[2]}\n"
-                f"Block/Dorm: {user[3]} / {user[4]}\n"
-                f"Phone: {user[5]}\n"
-                f"Restaurant: {order[3]}\n"
-                f"Item: {order[4]}\n"
-                f"Price: {order[5]} ETB\n"
-                f"Verification Code: {order[7]}\n"
-                f"Status: {order[6]}\n"
-                f"Delivery Location: {order[11]}, {order[12]}\n"
-                f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}"
-            )
-            await context.bot.send_message(chat_id=DB_GROUP_CHAT_ID, text=order_info)
-    except Exception as e:
-        logger.warning(f"Failed to send completed order info to DB group: {e}")
-
-    # Clean up order activity (remove from bot_data)
-    try:
-        admin_orders = context.bot_data.get('admin_orders', {})
-        if order_id in admin_orders:
-            del admin_orders[order_id]
-        order_locked = context.bot_data.get('order_locked', {})
-        if order_id in order_locked:
-            del order_locked[order_id]
-        user_cancel_msgs = context.bot_data.get('user_cancel_msgs', {})
-        if order_id in user_cancel_msgs:
-            del user_cancel_msgs[order_id]
-        # Remove live location relay if any
-        relays = context.bot_data.get('tracking_relays', {})
-        for k in list(relays.keys()):
-            if relays[k].get('order_id') == order_id:
-                del relays[k]
-        admin_live = context.bot_data.get('admin_live', {})
-        for k in list(admin_live.keys()):
-            if admin_live[k].get('order_id') == order_id:
-                del admin_live[k]
-    except Exception:
-        pass
 
 # 1. Standard setup: Show INFO for your own code
 # logging only shows WARNING and above by default, so we set it to INFO
@@ -554,8 +495,6 @@ logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 # Add REG_GENDER between REG_BLOCK and REG_DORM to support GC Building flow
 REG_LANGUAGE, REG_NAME, REG_ID, REG_BLOCK, REG_GENDER, REG_DORM, REG_PHONE = range(7)
 ORDER_REST, ORDER_ITEM, ORDER_CONFIRM, ORDER_LOCATION = range(7, 11)
-PICKUP_LOCATION, PICKUP_PROOF, DELIVERY_LOCATION, DELIVERY_PROOF, DELIVERY_CODE = range(
-    9, 14)
 DEV_WAIT_LOC = 99
 
 # Helper: Haversine Distance
@@ -1065,9 +1004,40 @@ async def reg_gender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dorm = update.message.text.strip()
     language = context.user_data.get('language', 'en')
+    current_block = context.user_data.get('block', '')
+    
+    # Check if we came from GC Building (Gender flow)
+    # The block name usually contains "GC" or is one of the dynamically added ones.
+    is_gc_flow = False
+    # A simple heuristic: check if the user has a stored gender (only GC flow sets gender)
+    if context.user_data.get('gender'):
+        is_gc_flow = True
 
     if dorm.lower() == 'back' or dorm == 'ተመለስ':
-         blocks = BLOCKS
+         # If GC Flow, show the specific GC blocks again
+         if is_gc_flow:
+             gender = context.user_data.get('gender').lower() # stored as Capitalized
+             key = 'gc_male_blocks' if gender == 'male' else 'gc_female_blocks'
+             # Default fallback if bot restarted
+             gc_blocks_fallback = [
+                "Arctecture/ Civil block",
+                "water_block",
+                "mechanical_electrical_block",
+                "2ND_comp/ 2ND_soft_block",
+                "soft / comp GC_block",
+                "unassigned",
+            ]
+             blocks = context.bot_data.get(key, gc_blocks_fallback)
+             
+         # If NewYork Flow
+         elif current_block.startswith('Block') and int(current_block.split()[1]) in range(1, 15): 
+             # Re-trigger NewYork logic (simplified: show the NY blocks)
+             blocks = context.bot_data.get('newyork_blocks', [f"Block {i}" for i in range(1,7)]) # Simplified fallback
+         
+         # Else Standard Flow
+         else:
+             blocks = BLOCKS
+
          keyboard = []
          row = []
          for b in blocks:
@@ -1078,6 +1048,7 @@ async def reg_dorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
          if row:
              keyboard.append(row)
          keyboard.append(['Back' if language == 'en' else 'ተመለስ'])
+         
          await update.message.reply_text(get_text('enter_block', language), reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
          return REG_BLOCK
 
@@ -1096,6 +1067,11 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- 1. HANDLE BACK BUTTON ---
     if text.lower() == 'back' or text == 'ተመለስ':
+        # Return to gender selection or block depending on flow
+        # For simplicity, returning to DORM state for standard flow.
+        # But if the user was coming from GC Building > Gender > Block scheme, 
+        # going back from phone -> dorm -> block is safe as we re-trigger the block logic.
+        
         await update.message.reply_text(get_text('enter_dorm', language), reply_markup=ReplyKeyboardMarkup([['Back' if language == 'en' else 'ተመለስ']], one_time_keyboard=True, resize_keyboard=True))
         return REG_DORM
 
@@ -1142,10 +1118,11 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Store language too in DB if needed (already set in context at start)
     user_language = context.user_data.get('language', 'en')
+    user_gender = context.user_data.get('gender')
 
     # Update database with username
     add_user(user_id, username, user_data['name'], user_data['student_id'],
-             user_data['block'], user_data['dorm'], user_data['phone'])
+             user_data['block'], user_data['dorm'], user_data['phone'], user_gender)
     
     # Also update language preference in DB
     set_user_language(user_id, user_language)
@@ -2904,9 +2881,6 @@ def main():
     application.add_handler(CallbackQueryHandler(
         admin_seen_user_callback, pattern='^admin_seen_user_'))
     init_db()
-    # Handler for admin confirming user payment
-    application.add_handler(CallbackQueryHandler(
-        admin_user_paid_callback, pattern='^admin_user_paid_yes_'))
 
     # --- New Handlers for Payment Proof & Rating ---
     # Handler for user uploading payment proof (photo)
@@ -3051,11 +3025,13 @@ def main():
         # Ignore commands (they are usually handled or ignored silently)
         if update.message.text and update.message.text.startswith('/'):
             return
+        
+        user_id = update.effective_user.id
+        from database import get_user_language
+        lang = get_user_language(user_id) or 'en'
 
         await update.message.reply_text(
-            "⚠️ **Server Restarted**\n\n"
-            "The server was a little overwhelmed and had to restart.\n"
-            "If your last action didn't work, please type /start to refresh your session.",
+            get_text('server_restart', lang),
             parse_mode='Markdown'
         )
 
@@ -3072,10 +3048,6 @@ def main():
             webhook_url = webhook_url[:-1]
 
         logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
-        
-        # Start pinger to keep the service alive
-        start_pinger(webhook_url)
-
         application.run_webhook(
             listen="0.0.0.0",
             port=port,

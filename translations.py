@@ -41,7 +41,18 @@ TRANSLATIONS = {
         'order_placed': "Order #{order_id} placed successfully! Code: {code}",
         'cancel_order_prompt': "If you wish to cancel your order, press below:",
         'cancel_order_button': "Cancel Order",
-        'resume_order': "Resume Order"
+        'resume_order': "Resume Order",
+        
+        # Payment & Rating (User Side)
+        'pay_instruct': "Start the payment process for order #{order_id} to the account {account} CBE account.\n**Total Amount to Transfer: {price} ETB**\nOnly complete transferring after you have verified the package.\n\n📸 **Please upload a screenshot/photo of the payment proof here.**",
+        'payment_proof_sent': "Payment proof sent! Waiting for admin verification.",
+        'payment_rejected': "❌ **Payment Proof Rejected**\n\nThe admin has marked your payment proof as invalid.\nPlease upload the correct payment screenshot again.",
+        'payment_verified': "✅ Payment Verified! Here is your receipt for Order #{order_id}:",
+        'stop_live_loc': "🛑 **Please Stop Sharing Your Live Location**\n\nTo protect your privacy and save battery:\n1. Tap the 'Stop Sharing Location' bar at the top of this chat.\n   OR\n2. Tap the map in the chat and select 'Stop Sharing'.",
+        'rate_us': "How was your delivery experience? Please rate us from 1 (Worst) to 10 (Best):",
+        'rating_submitted': "✅ Rating Submitted.\n\nTo place a new order, click: /order\nTo restart main menu, click: /start",
+        'order_complete_prompt': "✅ Order Complete!\n\nTo place a new order, click: /order\nTo restart main menu, click: /start",
+        'server_restart': "⚠️ **Server Restarted**\n\nThe server was a little overwhelmed and had to restart.\nIf your last action didn't work, please type /start to refresh your session."
     },
     'am': {
         'choose_lang': "Please choose your language:\nእባክዎ ቋንቋ ይምረጡ:",
@@ -84,7 +95,18 @@ TRANSLATIONS = {
         'order_placed': "ትዕዛዝ #{order_id} በድሎ ተመዝግቧል! ኮድ: {code}",
         'cancel_order_prompt': "ትዕዛዝዎን መሰረዝ ከፈለጉ፣ ከታች ይጫኑ:",
         'cancel_order_button': "ትዕዛዝ ሰርዝ",
-        'resume_order': "ትዕዛዝ ቀጥል"
+        'resume_order': "ትዕዛዝ ቀጥል",
+
+        # Payment & Rating (User Side)
+        'pay_instruct': "ለሂሳብ ቍጥር {order_id} ክፍያውን ወደ {account} የኢትዮጵያ ንግድ ባንክ ሂሳብ ያስገቡ።\n**የሚከፍሉት ጠቅላላ መጠን: {price} ብር**\nክፍያውን የሚፈጽሙት እሽግዎን ካረጋገጡ በኋላ ብቻ ነው።\n\n📸 **እባክዎን የክፍያ ማረጋገጫ ፎቶ እዚህ ይላኩ።**",
+        'payment_proof_sent': "የክፍያ ማረጋገጫ ተልኳል! የአድሚን ማረጋገጫ ይጠብቁ።",
+        'payment_rejected': "❌ **የክፍያ ማረጋገጫ ተቀባይነት አላገኘም**\n\nአድሚኑ የክፍያ ማረጋገጫዎ ትክክል እንዳልሆነ ገልጿል።\nእባክዎን ትክክለኛውን የክፍያ ማረጋገጫ እንደገና ይላኩ።",
+        'payment_verified': "✅ ክፍያ ተረጋግጧል! የትዕዛዝ #{order_id} ደረሰኝ ይኸውልዎት:",
+        'stop_live_loc': "🛑 **እባክዎ የቀጥታ መገኛ (Live Location) ማጋራት ያቁሙ**\n\nግላዊነትዎን ለመጠበቅ እና የባትሪ ሃይል ለመቆጠብ:\n1. ከዚህ ውይይት አናት ላይ ያለውን 'Stop Sharing Location' የሚለውን ይጫኑ።\n   OR\n2. ካርታውን በመንካት 'Stop Sharing' የሚለውን ይምረጡ።",
+        'rate_us': "የአገልግሎት አሰጣጣችን ምን ይመስላል? እባክዎ ከ 1 (ዝቅተኛ) እስከ 10 (ከፍተኛ) ደረጃ ይስጡን:",
+        'rating_submitted': "✅ ደረጃ ስለሰጡን እናመሰግናለን።\n\nአዲስ ትዕዛዝ ለማዘዝ፣ ይህን ይጫኑ: /order\nዋና ምናሌ ለመመለስ፣ ይህን ይጫኑ: /start",
+        'order_complete_prompt': "✅ ትዕዛዝ ተጠናቋል!\n\nአዲስ ትዕዛዝ ለማዘዝ፣ ይህን ይጫኑ: /order\nዋና ምናሌ ለመመለስ፣ ይህን ይጫኑ: /start",
+        'server_restart': "⚠️ **ሰርቨሩ እንደገና ተጀምሯል**\n\nበብዛት ሰው ስለነበረ ሰርቨሩ ትንሽ ተጨናንቆ ነበር።\nየመጨረሻው ትዕዛዝዎ ካልሰራ፣ እባክዎ /start ብለው እንደገና ይጀምሩ።"
     }
 
 }
