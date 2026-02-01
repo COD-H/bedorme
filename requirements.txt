@@ -3,4 +3,5 @@ python-dotenv>=1.0
 flask
 psycopg2-binary
 requests
+reportlab
 

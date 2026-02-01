@@ -569,8 +569,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['language'] = language
 
     # Check if user is already registered
-    if is_user_registered(user_id):
-        name = user[1] if user else "User"
+    if user:
+        name = user[2] if len(user) > 2 and user[2] else "User"
 
         await update.message.reply_text(
             get_text('welcome_back', language).format(name=name),
@@ -1121,9 +1121,18 @@ async def reg_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_gender = context.user_data.get('gender')
 
     # Update database with username
-    add_user(user_id, username, user_data['name'], user_data['student_id'],
+    changes = add_user(user_id, username, user_data['name'], user_data['student_id'],
              user_data['block'], user_data['dorm'], user_data['phone'], user_gender)
     
+    if changes:
+        try:
+            msg = f"⚠️ **User Details Changed**\nUser ID: {user_id}\n"
+            for field, (old, new) in changes.items():
+                msg += f"- {field.capitalize()}: {old} -> {new}\n"
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=msg, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to notify admin about user change: {e}")
+
     # Also update language preference in DB
     set_user_language(user_id, user_language)
 
@@ -1827,6 +1836,10 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         details = get_combined_order_details(context)
         code = ''.join(random.choices(string.digits, k=4))
 
+        # Get Pickup Coords
+        pickup_coords = RESTAURANTS.get(details['restaurant'], (None, None))
+        pickup_lat, pickup_lon = pickup_coords
+
         order_id = create_order(
             user_id,
             details['restaurant'],
@@ -1834,7 +1847,9 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             details['price'],
             code,
             lat,
-            lon
+            lon,
+            pickup_lat,
+            pickup_lon
         )
 
         # Notify admin/channel about new order (if configured)
@@ -1960,6 +1975,10 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                 await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Error: Could not find pending order data for user {user_id}.")
                 return
 
+            # Get Pickup Coords
+            pickup_coords = RESTAURANTS.get(pending_order['restaurant'], (None, None))
+            pickup_lat, pickup_lon = pickup_coords
+
             order_id = create_order(
                 user_id,
                 pending_order['restaurant'],
@@ -1967,7 +1986,9 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                 pending_order['price'],
                 code,
                 lat,
-                lon
+                lon,
+                pickup_lat,
+                pickup_lon
             )
 
             # Notify admin/channel about new order (if configured)
@@ -2147,9 +2168,31 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
     if sender_id != ADMIN_CHAT_ID:  # If it's a user
         try:
             active_orders = get_user_active_orders(sender_id)
-            for oid in active_orders:
-                update_order_location(oid, lat, lon)
-                print(f"DEBUG: Updated location for Order #{oid} in DB")
+            if active_orders:
+                for oid in active_orders:
+                    update_order_location(oid, lat, lon)
+                    print(f"DEBUG: Updated location for Order #{oid} in DB")
+            else:
+                 # Check if recently completed order exists (linger detection)
+                 # We warn if user is sharing location but has no active orders.
+                 # This check should be throttled to avoid spamming admin.
+                 linger_key = f"linger_warn_{sender_id}"
+                 last_warn = context.bot_data.get(linger_key, 0)
+                 if time.time() - last_warn > 300: # Warn every 5 minutes max
+                     user = get_user(sender_id)
+                     if user:
+                        name = user[1]
+                        phone = user[5] or "N/A"
+                        warn_msg = (
+                            f"⚠️ **Lingering Live Location Detected**\n"
+                            f"User: {name} (ID: {sender_id})\n"
+                            f"Phone: {phone}\n"
+                            f"Is sharing live location but has NO active orders.\n"
+                            f"Please contact them to stop sharing."
+                        )
+                        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=warn_msg, parse_mode='Markdown')
+                        context.bot_data[linger_key] = time.time()
+
         except Exception as e:
             print(f"DEBUG: Failed to update order location in DB: {e}")
 
