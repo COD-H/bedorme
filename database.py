@@ -53,7 +53,8 @@ def init_db():
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
                         tokens INTEGER DEFAULT 0,
-                        language TEXT DEFAULT NULL)''')
+                        language TEXT DEFAULT NULL,
+                        is_banned INTEGER DEFAULT 0)''')
             
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS orders
                         (order_id SERIAL PRIMARY KEY,
@@ -83,13 +84,15 @@ def init_db():
                         is_deliverer INTEGER DEFAULT 0,
                         balance REAL DEFAULT 0,
                         tokens INTEGER DEFAULT 0,
-                        language TEXT DEFAULT NULL)''')
+                        language TEXT DEFAULT NULL,
+                        is_banned INTEGER DEFAULT 0)''')
 
             # Migration: Robustly add columns if they don't exist
             columns_to_add = [
                 ("username", "TEXT"),
                 ("language", "TEXT DEFAULT NULL"),
-                ("gender", "TEXT")
+                ("gender", "TEXT"),
+                ("is_banned", "INTEGER DEFAULT 0")
             ]
             for col_name, col_type in columns_to_add:
                 try:
@@ -380,11 +383,36 @@ def get_user_language(user_id):
         return res[0] if res else None
     finally:
         conn.close()
+
+def ban_user(user_id):
+    conn = get_db_connection()
     try:
-        # Get recent active orders
-        cur = execute_query(conn, "SELECT order_id FROM orders WHERE customer_id = ? AND status IN ('pending', 'accepted', 'assigned')", (user_id,))
-        rows = cur.fetchall()
-        return [r[0] for r in rows]
+        execute_query(conn, "UPDATE users SET is_banned = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_full_user_info(user_id):
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user_row = cur.fetchone()
+        
+        if not user_row:
+            return None
+            
+        cur.execute("SELECT * FROM user_history WHERE user_id = ? ORDER BY change_timestamp DESC", (user_id,))
+        history = cur.fetchall()
+        
+        cur.execute("SELECT * FROM orders WHERE customer_id = ? OR deliverer_id = ? ORDER BY order_id DESC", (user_id, user_id))
+        orders = cur.fetchall()
+        
+        return {
+            'info': user_row,
+            'history': history,
+            'orders': orders
+        }
     finally:
         conn.close()
 

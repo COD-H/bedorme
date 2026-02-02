@@ -550,11 +550,16 @@ if not COMPLETED_ORDERS_CHANNEL_ID:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Check language first
+    # Check language and ban status
     user = get_user(user_id)
+    
+    if user and len(user) > 12 and user[12]: # is_banned column
+        await update.message.reply_text("❌ Access Denied: Your account has been suspended for security reasons.")
+        return
+
     language = None
-    if user and len(user) > 10:
-        language = user[10]
+    if user and len(user) > 11:
+        language = user[11]
     
     if not language:
         language = context.user_data.get('language')
@@ -3091,6 +3096,16 @@ def main():
             webhook_url = webhook_url[:-1]
 
         logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
+        
+        # Integration notice: Webhook mode only supports the main bot for now
+        # Creator bot will still run in polling mode if token exists
+        from creator_bot import create_creator_app
+        creator_app = create_creator_app()
+        if creator_app:
+            import asyncio
+            asyncio.create_task(creator_app.run_polling())
+            logging.info("Creator Bot started in polling mode alongside Webhook.")
+
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -3100,7 +3115,31 @@ def main():
     else:
         logging.info("Starting in Polling mode.")
         keep_alive()  # Start the web server to keep the bot alive
-        application.run_polling()
+        
+        from creator_bot import create_creator_app
+        creator_app = create_creator_app()
+        if creator_app:
+            import asyncio
+            # We run creator bot in a separate polling session
+            # Note: run_polling is blocking, so we need to be careful.
+            # In PTB 20+, we should ideally use a single loop.
+            
+            async def run_both():
+                await application.initialize()
+                await application.start()
+                await application.updater.start_polling()
+                
+                await creator_app.initialize()
+                await creator_app.start()
+                await creator_app.updater.start_polling()
+                
+                # Keep running
+                while True:
+                    await asyncio.sleep(3600)
+            
+            asyncio.run(run_both())
+        else:
+            application.run_polling()
 
 
 if __name__ == '__main__':
