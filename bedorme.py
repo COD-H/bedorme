@@ -2849,6 +2849,35 @@ async def post_init(application: Application):
         except Exception as e:
             logging.error(f"Failed to send restart prompt: {e}")
 
+    # --- INTEGRATED CREATOR BOT STARTUP ---
+    from creator_bot import create_creator_app
+    creator_app = create_creator_app()
+    if creator_app:
+        try:
+            logging.info("Initializing Creator Bot as background service...")
+            await creator_app.initialize()
+            await creator_app.start()
+            await creator_app.updater.start_polling()
+            application.bot_data['creator_app'] = creator_app
+            logging.info("Creator Bot started successfully.")
+        except Exception as e:
+            logging.error(f"Failed to start Creator Bot: {e}")
+    # --------------------------------------
+
+
+async def post_shutdown(application: Application):
+    """Cleanup secondary bot if running."""
+    creator_app = application.bot_data.get('creator_app')
+    if creator_app:
+        try:
+            logging.info("Stopping Creator Bot...")
+            await creator_app.updater.stop()
+            await creator_app.stop()
+            await creator_app.shutdown()
+            logging.info("Creator Bot stopped.")
+        except Exception as e:
+            logging.error(f"Error during Creator Bot shutdown: {e}")
+
 
 def main():
     # Handler for admin requesting updated user location
@@ -2913,6 +2942,7 @@ def main():
         .request(request)
         .persistence(persistence)
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 
@@ -3097,15 +3127,6 @@ def main():
 
         logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
         
-        # Integration notice: Webhook mode only supports the main bot for now
-        # Creator bot will still run in polling mode if token exists
-        from creator_bot import create_creator_app
-        creator_app = create_creator_app()
-        if creator_app:
-            import asyncio
-            asyncio.create_task(creator_app.run_polling())
-            logging.info("Creator Bot started in polling mode alongside Webhook.")
-
         application.run_webhook(
             listen="0.0.0.0",
             port=port,
@@ -3115,31 +3136,7 @@ def main():
     else:
         logging.info("Starting in Polling mode.")
         keep_alive()  # Start the web server to keep the bot alive
-        
-        from creator_bot import create_creator_app
-        creator_app = create_creator_app()
-        if creator_app:
-            import asyncio
-            # We run creator bot in a separate polling session
-            # Note: run_polling is blocking, so we need to be careful.
-            # In PTB 20+, we should ideally use a single loop.
-            
-            async def run_both():
-                await application.initialize()
-                await application.start()
-                await application.updater.start_polling()
-                
-                await creator_app.initialize()
-                await creator_app.start()
-                await creator_app.updater.start_polling()
-                
-                # Keep running
-                while True:
-                    await asyncio.sleep(3600)
-            
-            asyncio.run(run_both())
-        else:
-            application.run_polling()
+        application.run_polling()
 
 
 if __name__ == '__main__':
