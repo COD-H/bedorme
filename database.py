@@ -70,6 +70,15 @@ def init_db():
                         delivery_proof TEXT,
                         delivery_lat REAL,
                         delivery_lon REAL)''')
+            
+            execute_query(conn, '''CREATE TABLE IF NOT EXISTS cafe_contracts
+                        (id SERIAL PRIMARY KEY, 
+                        user_id BIGINT, 
+                        cafe_name TEXT, 
+                        phone TEXT, 
+                        username TEXT, 
+                        full_name TEXT, 
+                        start_date REAL)''')
         else:
             # SQLite syntax
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS users
@@ -155,6 +164,15 @@ def init_db():
                     (order_id INTEGER,
                     rating INTEGER,
                     comment TEXT)''')
+
+        execute_query(conn, '''CREATE TABLE IF NOT EXISTS cafe_contracts
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    user_id BIGINT, 
+                    cafe_name TEXT, 
+                    phone TEXT, 
+                    username TEXT, 
+                    full_name TEXT, 
+                    start_date REAL)''')
 
         conn.commit()
     finally:
@@ -413,6 +431,38 @@ def get_full_user_info(user_id):
             'history': history,
             'orders': orders
         }
+    finally:
+        conn.close()
+
+def add_cafe_contract(user_id, cafe_name, phone, username, full_name):
+    conn = get_db_connection()
+    try:
+        start_date = time.time()
+        execute_query(conn, "INSERT INTO cafe_contracts (user_id, cafe_name, phone, username, full_name, start_date) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, cafe_name, phone, username, full_name, start_date))
+        conn.commit()
+    finally:
+        conn.close()
+
+def is_contract_user(user_id, cafe_name):
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT 1 FROM cafe_contracts WHERE user_id = ? AND cafe_name = ?", (user_id, cafe_name))
+        return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+def get_user_by_username(username):
+    """Find a user_id by username from the users table."""
+    if not username:
+        return None
+    username = username.lstrip('@').lower()
+    conn = get_db_connection()
+    try:
+        # Check both with and without @
+        cur = execute_query(conn, "SELECT user_id FROM users WHERE LOWER(username) = ? OR LOWER(username) = ?", (username, f"@{username}"))
+        row = cur.fetchone()
+        return row[0] if row else None
     finally:
         conn.close()
 

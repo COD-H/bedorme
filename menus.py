@@ -70,5 +70,43 @@ MENUS = {
         "Gomen besga": 200,
         "Key sga wet": 250,
         "2L Water": 40
+    },
+    "tedi ena amsal (trip)": {
+        "Pasta be sgo": 65,
+        "Pasta firfir": 65,
+        "Dinche wot key/alicha": 65,
+        "Tegabino": 80,
+        "Shiro": 65,
+        "Avocado": 70,
+        "Aynet": 60,
+        "Water kik": 70,
+        "Misir": 60,
+        "Testi": 100,
+        "Testi wet": 70,
+        "Selata": 60
     }
+}
+
+CONTRACT_MENUS = {
+    "tedi ena amsal (trip)": {
+        "Pasta be sgo": 60,
+        "Pasta firfir": 60,
+        "Dinche wot key/alicha": 60,
+        "Tegabino": 80,
+        "Shiro": 60,
+        "Avocado": 70,
+        "Aynet": 60,
+        "Water kik": 70,
+        "Misir": 60,
+        "Testi": 100,
+        "Testi wet": 70,
+        "Selata": 65
+    },
+    "Zebra": {},
+    "Selam": {},
+    "Promy": {},
+    "Edget": {},
+    "Fele": {},
+    "Twins/alem/peter": {},
+    "Lucy": {}
 }

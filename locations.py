@@ -7,7 +7,8 @@ RESTAURANTS = {
     "Wesen": (6.0653, 37.5601),
     "Selam": (6.0653, 37.5601),
     "Webete": (6.0653, 37.5601),
-    "Darek": (6.0653, 37.5601)
+    "Darek": (6.0653, 37.5601),
+    "tedi ena amsal (trip)": (6.0653, 37.5601)
 }
 
 # Coordinates for Dorm Blocks

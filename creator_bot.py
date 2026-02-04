@@ -7,12 +7,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
     ContextTypes, MessageHandler, filters, TypeHandler,
-    ApplicationHandlerStop
+    ApplicationHandlerStop, ConversationHandler
 )
 from dotenv import load_dotenv
 
 # Import database functions
-from database import get_db_connection, get_user, ban_user, get_full_user_info
+from database import (
+    get_db_connection, get_user, ban_user, get_full_user_info, 
+    add_cafe_contract, get_user_by_username
+)
+from menus import MENUS
 
 load_dotenv()
 
@@ -185,6 +189,71 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+WAITING_USERNAME, WAITING_PHONE, WAITING_NAME = range(3)
+
+async def cafe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = "🏪 **Available Cafes:**\n\n"
+    keyboard = []
+    for cafe in MENUS.keys():
+        msg += f"📍 {cafe}\n"
+        keyboard.append([InlineKeyboardButton(f"Add Contract for {cafe}", callback_data=f"contract_{cafe}")])
+    
+    await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def contract_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    cafe_name = query.data.replace("contract_", "")
+    context.user_data['contract_cafe'] = cafe_name
+    
+    await query.edit_message_text(f"📝 Adding contract for **{cafe_name}**.\n\nPlease enter the user's **Telegram Username** (with or without @):", parse_mode='Markdown')
+    return WAITING_USERNAME
+
+async def process_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.message.text.strip()
+    user_id = get_user_by_username(username)
+    
+    if not user_id:
+        await update.message.reply_text("❌ User not found in main bot database. They must be registered in the bot first. Please enter a valid username or /cancel:")
+        return WAITING_USERNAME
+    
+    context.user_data['contract_user_id'] = user_id
+    context.user_data['contract_username'] = username
+    
+    await update.message.reply_text("📱 Great! Now enter their **Phone Number**:")
+    return WAITING_PHONE
+
+async def process_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text.strip()
+    context.user_data['contract_phone'] = phone
+    
+    await update.message.reply_text("👤 Almost done! Enter their **Full Name**:")
+    return WAITING_NAME
+
+async def process_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    full_name = update.message.text.strip()
+    user_id = context.user_data['contract_user_id']
+    cafe_name = context.user_data['contract_cafe']
+    phone = context.user_data['contract_phone']
+    username = context.user_data['contract_username']
+    
+    add_cafe_contract(user_id, cafe_name, phone, username, full_name)
+    
+    await update.message.reply_text(
+        f"✅ **Contract Added Successfully!**\n\n"
+        f"👤 **User:** {full_name} (@{username})\n"
+        f"📍 **Cafe:** {cafe_name}\n"
+        f"📞 **Phone:** {phone}\n"
+        f"🆔 **User ID:** `{user_id}`",
+        parse_mode='Markdown'
+    )
+    return ConversationHandler.END
+
+async def cancel_contract(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Contract addition cancelled.")
+    return ConversationHandler.END
+
 def create_creator_app():
     if not TOKEN:
         return None
@@ -201,6 +270,19 @@ def create_creator_app():
     application.add_handler(CommandHandler("active", list_active_orders_command))
     application.add_handler(CommandHandler("orders", list_active_orders_command)) # Reuse list_active for now or simple list
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("cafe", cafe_command))
+
+    # Contract Conversation Handler
+    contract_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(contract_callback, pattern="^contract_")],
+        states={
+            WAITING_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_username)],
+            WAITING_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_phone)],
+            WAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_name)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_contract)],
+    )
+    application.add_handler(contract_conv)
     
     return application
 

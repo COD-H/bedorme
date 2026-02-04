@@ -5,11 +5,11 @@ import math
 import asyncio
 from keep_alive import keep_alive, start_pinger
 from locations import RESTAURANTS, BLOCKS, ALLOWED_RADIUS
-from menus import MENUS
+from menus import MENUS, CONTRACT_MENUS
 from database import (
     init_db, add_user, create_order, get_user, update_order_location,
     get_user_active_orders, set_user_language, get_user_language, get_order,
-    mark_order_complete, save_rating
+    mark_order_complete, save_rating, is_contract_user
 )
 from translations import get_text
 from telegram.ext import (
@@ -1501,7 +1501,17 @@ async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Store clean choice
     context.user_data['restaurant'] = choice
-    menu = MENUS[choice]
+    
+    # Check for contract status
+    is_contract = is_contract_user(update.effective_user.id, choice)
+    context.user_data['is_contract'] = is_contract
+    
+    if is_contract and choice in CONTRACT_MENUS:
+        menu = CONTRACT_MENUS[choice]
+        contract_msg = "\n\n🎖️ **Contract Price Applied**"
+    else:
+        menu = MENUS[choice]
+        contract_msg = ""
     
     language = context.user_data.get('language', 'en')
 
@@ -1511,8 +1521,9 @@ async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([f"{item} - {price} ETB"])
 
     await update.message.reply_text(
-        get_text('choose_item', language).format(restaurant=choice),
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+        get_text('choose_item', language).format(restaurant=choice) + contract_msg,
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
+        parse_mode='Markdown'
     )
     return ORDER_ITEM
 
@@ -1523,12 +1534,20 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     language = context.user_data.get('language', 'en')
 
     # --- PARAMETER CHECK: PREVENT CRASH & UNAUTHORIZED COMMANDS ---
+    restaurant = context.user_data.get('restaurant')
+    is_contract = context.user_data.get('is_contract', False)
+    
+    if is_contract and restaurant in CONTRACT_MENUS:
+        current_menu = CONTRACT_MENUS[restaurant]
+    else:
+        current_menu = MENUS.get(restaurant, {})
+
     if text.startswith('/'):
         await update.message.reply_text(
             "⚠️ Please use the buttons provided. Commands are not allowed during ordering.",
             reply_markup=ReplyKeyboardMarkup(
                 [[f"{item} - {price} ETB"] for item,
-                    price in MENUS.get(context.user_data.get('restaurant'), {}).items()],
+                    price in current_menu.items()],
                 one_time_keyboard=True, resize_keyboard=True)
         )
         return ORDER_ITEM
@@ -1555,7 +1574,7 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ Invalid selection. Please use the buttons provided.",
             reply_markup=ReplyKeyboardMarkup(
                 [[f"{item} - {price} ETB"] for item,
-                    price in MENUS.get(context.user_data.get('restaurant'), {}).items()],
+                    price in current_menu.items()],
                 one_time_keyboard=True, resize_keyboard=True)
         )
         return ORDER_ITEM
