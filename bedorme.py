@@ -10,12 +10,13 @@ from database import (
     init_db, add_user, create_order, get_user, update_order_location,
     get_user_active_orders, set_user_language, get_user_language, get_order,
     mark_order_complete, save_rating, is_contract_user, get_contract_details,
-    update_contract_payment
+    update_contract_payment, log_suspicious_access
 )
 from translations import get_text
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, ConversationHandler,
-    MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler
+    MessageHandler, filters, CallbackQueryHandler, PicklePersistence, TypeHandler,
+    ApplicationHandlerStop
 )
 from telegram import (
     Update, ReplyKeyboardMarkup, ReplyKeyboardRemove,
@@ -35,6 +36,23 @@ load_dotenv()
 
 # TOKEN (now loaded from .env)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+async def check_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not user:
+        return
+    
+    db_user = get_user(user.id)
+    if db_user and len(db_user) > 12 and db_user[12]: # Index 12 is is_banned
+        # Log to suspicious DB
+        phone = db_user[6] if len(db_user) > 6 else "N/A"
+        log_suspicious_access(user.id, user.username, user.full_name, phone, "Banned user tried to access bot")
+        
+        await update.effective_chat.send_message(
+            "🚫 **ACCESS DENIED**\n\nYour account is restricted. Contact support if this is an error.",
+            parse_mode='Markdown'
+        )
+        raise ApplicationHandlerStop
 
 async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback when admin confirms they have seen the user (within 50m)."""
@@ -85,12 +103,16 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
 
     if is_contract:
         try:
+            # Get deliverer location for the log
+            loc = context.bot_data.get(f'latest_location_{query.from_user.id}', {})
+            mark_order_complete(order_id, lat=loc.get('lat'), lon=loc.get('lon'))
+            
             await context.bot.send_message(
                 chat_id=user_id,
                 text="🎖️ **Contract Order Confirmed**\n\nThe deliverer has seen you. Since this is a contract order, your balance was automatically adjusted. No payment proof is needed. Enjoy your meal!",
                 parse_mode='Markdown'
             )
-            await query.edit_message_text("Confirmed: Seen receiver. (Contract Order - No payment proof needed)")
+            await query.edit_message_text("Confirmed: Seen receiver. (Contract Order - Completed ✅)")
             return
         except Exception as e:
             logger.warning(f"Failed to send contract confirmation to user {user_id}: {e}")
@@ -266,7 +288,9 @@ async def handle_admin_receipt(update: Update, context: ContextTypes.DEFAULT_TYP
     # 2. Mark order complete
     try:
         # Already imported at top
-        mark_order_complete(order_id)
+        # Get deliverer location from bot_data if available
+        loc = context.bot_data.get(f'latest_location_{msg.from_user.id}', {})
+        mark_order_complete(order_id, lat=loc.get('lat'), lon=loc.get('lon'))
 
         # Retrieve User Proof
         user_proof_id = context.bot_data.get(f'user_proof_{order_id}')
@@ -1940,6 +1964,20 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_contract = context.user_data.get('is_contract', False)
         order_type = 'contract' if is_contract else 'regular'
 
+        # Pre-check for contract balance/credit
+        if is_contract:
+            res = update_contract_payment(user_id, details['restaurant'], details['price'])
+            if res == "credit_limit_reached":
+                await message.reply_text(
+                    "❌ **ORDER FAILED**\n\nYour contract balance is empty and you have reached the maximum credit limit (2 meals). Please pay your dues at the cafe to continue ordering.",
+                    parse_mode='Markdown'
+                )
+                return ConversationHandler.END
+            elif res == "no_contract":
+                 # Should not happen if is_contract is True, but handle anyway
+                 is_contract = False
+                 order_type = 'regular'
+
         order_id = create_order(
             user_id,
             details['restaurant'],
@@ -1952,11 +1990,6 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pickup_lon,
             order_type=order_type
         )
-
-        # Update balance for contract users
-        if is_contract:
-            restaurant = details['restaurant']
-            update_contract_payment(user_id, restaurant, details['price'])
 
         # Notify admin/channel about new order (if configured)
         try:
@@ -2291,7 +2324,7 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                         
                         info_msg = (
                             f"📍 **Live Tracking Update**\n"
-                            f"👤 **Customer:** {user[1] if user else 'Unknown'}\n"
+                            f"👤 **Customer:** {user[1] if user else 'Unknown'} ({order[7].upper() if order else '???'})\n"
                             f"📦 **Order:** #{oid} ({order[4] if order else '???'})\n"
                             f"📞 **Phone:** {user[5] if user else 'N/A'}\n"
                             f"🚚 **Deliverer:** {deliverer_name}\n"
@@ -3071,6 +3104,9 @@ def main():
         .post_shutdown(post_shutdown)
         .build()
     )
+
+    # 1. SECURITY LAYER (GROUP -1 runs first)
+    application.add_handler(TypeHandler(Update, check_banned), group=-1)
 
     # Handler for restart decision
     application.add_handler(CallbackQueryHandler(

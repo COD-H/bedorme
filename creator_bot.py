@@ -11,11 +11,18 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+
 # Import database functions
 from database import (
     get_db_connection, get_user, ban_user, get_full_user_info, 
     add_cafe_contract, get_user_by_username, get_all_admins,
-    set_user_as_admin, get_contract_details, update_contract_payment
+    set_user_as_admin, get_contract_details, update_contract_payment,
+    get_active_users, get_contract_users, get_regular_users, search_users,
+    delete_user_completely
 )
 from menus import MENUS
 
@@ -145,10 +152,14 @@ async def investigate_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             report += f"- {ts}: {h[2]} (@{h[3]}) phone: {h[4]}\n"
             
     if orders:
-        report += f"\n🛍️ **Past Orders ({len(orders)}):**\n"
+        report += f"\n🛍️ **Recent Orders ({len(orders)}):**\n"
         for o in orders[:8]:
-            # o: order_id, customer_id, deliverer_id, restaurant, items, price, status...
-            report += f"- #{o[0]} | {o[3]} | {o[5]} ETB | {o[6]}\n"
+            # Indices: 0:id, 3:rest, 5:price, 6:status, 7:type, 12:lat, 13:lon, 16:created, 17:delivered
+            created_ts = datetime.datetime.fromtimestamp(o[16]).strftime('%H:%M') if (len(o) > 16 and o[16]) else "??"
+            deliv_ts = datetime.datetime.fromtimestamp(o[17]).strftime('%H:%M') if (len(o) > 17 and o[17]) else "--"
+            report += f"- #{o[0]} | {o[3]} | {o[5]} ETB | {o[6]} ({o[7]}) | 🕒 {created_ts}→{deliv_ts}\n"
+            if len(o) > 13 and o[12] and o[13]: 
+                report += f"  📍 [Map](https://www.google.com/maps/search/?api=1&query={o[12]},{o[13]})\n"
             
     await update.message.reply_text(report, parse_mode='Markdown')
 
@@ -191,6 +202,172 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 Total Orders: {order_count}\n"
         f"💰 Total Revenue: {total_rev:.2f} ETB",
         parse_mode='Markdown'
+    )
+
+async def user_management_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("✅ Active Users", callback_data="users_active"),
+         InlineKeyboardButton("📜 Contract Users", callback_data="users_contract")],
+        [InlineKeyboardButton("👤 Regular Users", callback_data="users_regular"),
+         InlineKeyboardButton("🔍 Find User", callback_data="users_find")],
+    ]
+    await update.message.reply_text(
+        "👥 **User Management Dashboard**\n\n"
+        "Select a category to view or search for a specific user.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+SEARCH_USER_INPUT = 10  # New state
+
+async def user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    users = []
+    title = ""
+    
+    if data == "users_active":
+        users = get_active_users()
+        title = "Active Users (Last 7 Days)"
+    elif data == "users_contract":
+        users = get_contract_users()
+        title = "Contract Users"
+    elif data == "users_regular":
+        users = get_regular_users()
+        title = "Regular Users"
+    elif data == "users_find":
+        await query.edit_message_text("🔍 Please enter the **Name**, **Username**, **Phone**, or **Student ID** to search:")
+        return SEARCH_USER_INPUT
+
+    if not users:
+        await query.edit_message_text(f"No users found in category: {title}")
+        return
+
+    # Show first 10 and option to export PDF
+    msg = f"📊 **{title} ({len(users)})**\n\n"
+    for u in users[:15]:
+        # u: 0:id, 1:username, 2:name, 3:student_id, 4:block, 5:dorm, 6:phone...
+        msg += f"• {u[2]} (@{u[1]}) | `{u[0]}`\n"
+    
+    if len(users) > 15:
+        msg += f"\n...and {len(users)-15} more."
+
+    keyboard = [[InlineKeyboardButton("📄 Export to PDF", callback_data=f"export_pdf_{data}")]]
+    await query.edit_message_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def handle_user_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    search_q = update.message.text.strip()
+    users = search_users(search_q)
+    
+    if not users:
+        await update.message.reply_text(f"❌ No users found matching '{search_q}'. Try again or /cancel:")
+        return SEARCH_USER_INPUT
+        
+    msg = f"🔍 **Search Results for '{search_q}'**\n\n"
+    keyboard = []
+    for u in users[:10]:
+        msg += f"👤 **{u[2]}** (@{u[1]})\nID: `{u[0]}` | Phone: {u[6]}\n\n"
+        keyboard.append([InlineKeyboardButton(f"Audit {u[2]}", callback_data=f"investigate_{u[0]}")])
+        keyboard.append([InlineKeyboardButton(f"🗑️ Delete/Ban {u[2]}", callback_data=f"delete_user_{u[0]}")])
+    
+    if len(users) > 10:
+        msg += f"Found {len(users)} results. Showing top 10."
+    
+    await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+    return ConversationHandler.END
+
+async def investigate_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    target_id = int(query.data.split("_")[1])
+    
+    # Just reuse investigate_command logic but for callback
+    context.args = [str(target_id)]
+    await investigate_command(update, context)
+
+async def delete_user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    target_id = int(query.data.split("_")[2])
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Yes, Delete & Archive", callback_data=f"confirm_delete_{target_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="users_dashboard")]
+    ]
+    await query.edit_message_text(f"⚠️ **ARE YOU SURE?**\n\nDeleting user `{target_id}` will:\n1. Move all their data to the Suspicious/Deleted Database.\n2. Permanently remove them from the main system.\n3. Ban their account from future use.", 
+                                  parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def confirm_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    target_id = int(query.data.split("_")[2])
+    
+    success = delete_user_completely(target_id)
+    if success:
+        await query.edit_message_text(f"✅ User `{target_id}` has been archived and removed from the system.")
+    else:
+        await query.edit_message_text("❌ Error: User not found or already deleted.")
+
+async def export_pdf_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    category = query.data.replace("export_pdf_users_", "")
+    
+    users = []
+    if category == "active": users = get_active_users()
+    elif category == "contract": users = get_contract_users()
+    elif category == "regular": users = get_regular_users()
+    
+    if not users:
+        await query.edit_message_text("No data to export.")
+        return
+
+    # Generate PDF
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(1*inch, height - 1*inch, f"Bedorme User Report: {category.upper()}")
+    c.setFont("Helvetica", 10)
+    c.drawString(1*inch, height - 1.2*inch, f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    
+    y = height - 1.6*inch
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(0.5*inch, y, "ID")
+    c.drawString(1.5*inch, y, "Name")
+    c.drawString(3.5*inch, y, "Username")
+    c.drawString(5.0*inch, y, "Phone")
+    c.drawString(6.5*inch, y, "Student ID")
+    
+    y -= 0.2*inch
+    c.line(0.5*inch, y, 7.5*inch, y)
+    y -= 0.2*inch
+    
+    c.setFont("Helvetica", 9)
+    for u in users:
+        if y < 1*inch:
+            c.showPage()
+            y = height - 1*inch
+            c.setFont("Helvetica", 9)
+            
+        c.drawString(0.5*inch, y, str(u[0]))
+        c.drawString(1.5*inch, y, str(u[2])[:25])
+        c.drawString(3.5*inch, y, f"@{u[1]}" if u[1] else "N/A")
+        c.drawString(5.0*inch, y, str(u[6]))
+        c.drawString(6.5*inch, y, str(u[3]))
+        y -= 0.2*inch
+    
+    c.save()
+    buffer.seek(0)
+    
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=buffer,
+        filename=f"users_{category}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf",
+        caption=f"📄 User report for category: {category}"
     )
 
 WAITING_USERNAME, WAITING_PHONE, WAITING_NAME, WAITING_CONTRACT_ID, WAITING_LIST_ORDER, WAITING_PAYMENT = range(6)
@@ -351,8 +528,27 @@ def create_creator_app():
     # 2. HANDLERS
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("investigate", investigate_command))
-    application.add_handler(CommandHandler("user", investigate_command))
+    application.add_handler(CommandHandler("user", user_management_command))
     application.add_handler(CommandHandler("active", list_active_orders_command))
+    
+    # User Management Callbacks
+    application.add_handler(CallbackQueryHandler(user_callback, pattern="^users_"))
+    application.add_handler(CallbackQueryHandler(export_pdf_callback, pattern="^export_pdf_"))
+    application.add_handler(CallbackQueryHandler(investigate_callback, pattern="^investigate_"))
+    application.add_handler(CallbackQueryHandler(delete_user_callback, pattern="^delete_user_"))
+    application.add_handler(CallbackQueryHandler(confirm_delete_callback, pattern="^confirm_delete_"))
+    application.add_handler(CallbackQueryHandler(user_management_command, pattern="^users_dashboard$"))
+
+    # User Search Conversation
+    user_search_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(user_callback, pattern="^users_find$")],
+        states={
+            SEARCH_USER_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_search)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_contract)],
+    )
+    application.add_handler(user_search_conv)
+
     application.add_handler(CommandHandler("orders", list_active_orders_command)) # Reuse list_active for now or simple list
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("cafe", cafe_command))

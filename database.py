@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DB_PATH = os.path.join(os.path.dirname(__file__), 'bedorme.db')
+SUSPICIOUS_DB_PATH = os.path.join(os.path.dirname(__file__), 'suspicious_users.db')
 
 def get_db_connection():
     if DATABASE_URL:
@@ -17,6 +18,116 @@ def get_db_connection():
         conn = sqlite3.connect(DB_PATH)
         return conn
 
+def get_suspicious_connection():
+    return sqlite3.connect(SUSPICIOUS_DB_PATH)
+
+def init_suspicious_db():
+    conn = get_suspicious_connection()
+    try:
+        cur = conn.cursor()
+        # Table for user data backup
+        cur.execute('''CREATE TABLE IF NOT EXISTS deleted_users
+                    (user_id INTEGER PRIMARY KEY, 
+                    username TEXT,
+                    name TEXT, 
+                    student_id TEXT, 
+                    block TEXT, 
+                    dorm_number TEXT, 
+                    phone TEXT, 
+                    gender TEXT,
+                    is_deliverer INTEGER,
+                    balance REAL,
+                    tokens INTEGER,
+                    language TEXT,
+                    is_banned INTEGER,
+                    deleted_at REAL)''')
+        
+        # Table for past orders of deleted users
+        cur.execute('''CREATE TABLE IF NOT EXISTS deleted_user_orders
+                    (order_id INTEGER PRIMARY KEY,
+                    customer_id INTEGER,
+                    restaurant TEXT,
+                    items TEXT,
+                    total_price REAL,
+                    status TEXT,
+                    delivery_lat REAL,
+                    delivery_lon REAL,
+                    pickup_lat REAL,
+                    pickup_lon REAL,
+                    created_at REAL,
+                    delivered_at REAL)''')
+
+        # Table for unauthorized access attempts
+        cur.execute('''CREATE TABLE IF NOT EXISTS security_breaches
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    full_name TEXT,
+                    phone TEXT,
+                    reason TEXT,
+                    timestamp REAL)''')
+        conn.commit()
+    finally:
+        conn.close()
+
+def log_suspicious_access(user_id, username, full_name, phone, reason):
+    conn = get_suspicious_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO security_breaches (user_id, username, full_name, phone, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                    (user_id, username, full_name, phone, reason, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_suspicious_data():
+    conn = get_suspicious_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM security_breaches ORDER BY timestamp DESC")
+        breaches = cur.fetchall()
+        cur.execute("SELECT * FROM deleted_users ORDER BY deleted_at DESC")
+        deleted = cur.fetchall()
+        return {'breaches': breaches, 'deleted': deleted}
+    finally:
+        conn.close()
+
+def delete_user_completely(user_id):
+    """Backs up user data to suspicious DB and removes from main DB."""
+    # 1. Fetch info from main DB
+    main_conn = get_db_connection()
+    susp_conn = get_suspicious_connection()
+    try:
+        # Get user
+        cur = main_conn.cursor()
+        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user_row = cur.fetchone()
+        
+        if user_row:
+            # Backup User
+            scur = susp_conn.cursor()
+            scur.execute("INSERT OR REPLACE INTO deleted_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 
+                        (*user_row, time.time()))
+            
+            # Backup Orders
+            cur.execute("SELECT order_id, customer_id, restaurant, items, total_price, status, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at FROM orders WHERE customer_id = ?", (user_id,))
+            orders = cur.fetchall()
+            for o in orders:
+                scur.execute("INSERT OR REPLACE INTO deleted_user_orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", o)
+            
+            susp_conn.commit()
+            
+            # 2. Delete from main DB
+            cur.execute("DELETE FROM orders WHERE customer_id = ?", (user_id,))
+            cur.execute("DELETE FROM cafe_contracts WHERE user_id = ?", (user_id,))
+            cur.execute("DELETE FROM user_history WHERE user_id = ?", (user_id,))
+            cur.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            main_conn.commit()
+            return True
+        return False
+    finally:
+        main_conn.close()
+        susp_conn.close()
 
 def execute_query(conn, query, params=()):
     if DATABASE_URL:
@@ -27,11 +138,52 @@ def execute_query(conn, query, params=()):
     cur.execute(query, params)
     return cur
 
-def mark_order_complete(order_id):
+def mark_order_complete(order_id, lat=None, lon=None):
     conn = get_db_connection()
     try:
-        execute_query(conn, "UPDATE orders SET status = 'complete', delivered_at = ? WHERE order_id = ?", (time.time(), order_id,))
+        execute_query(conn, "UPDATE orders SET status = 'complete', delivered_at = ?, delivery_lat = ?, delivery_lon = ? WHERE order_id = ?", 
+                     (time.time(), lat, lon, order_id))
         conn.commit()
+    finally:
+        conn.close()
+
+def get_active_users():
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        t_limit = time.time() - 7*24*3600
+        # Search for users with orders in the last 7 days
+        cur.execute("SELECT * FROM users WHERE user_id IN (SELECT customer_id FROM orders WHERE created_at > ?)", (t_limit,))
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def get_contract_users():
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT u.* FROM users u JOIN cafe_contracts c ON u.user_id = c.user_id")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def get_regular_users():
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # Not in cafe_contracts
+        cur.execute("SELECT * FROM users WHERE user_id NOT IN (SELECT user_id FROM cafe_contracts)")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def search_users(query):
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        q = f"%{query}%"
+        cur.execute("SELECT * FROM users WHERE name LIKE ? OR student_id LIKE ? OR phone LIKE ? OR username LIKE ?", (q, q, q, q))
+        return cur.fetchall()
     finally:
         conn.close()
 
@@ -143,26 +295,25 @@ def init_db():
                         items TEXT,
                         total_price REAL,
                         status TEXT DEFAULT 'pending',
+                        order_type TEXT DEFAULT 'regular',
                         verification_code TEXT,
                         mid_delivery_proof TEXT,
                         proof_timestamp REAL,
                         delivery_proof TEXT,
                         delivery_lat REAL,
                         delivery_lon REAL,
-                        pickup_lat REAL,
-                        pickup_lon REAL,
                         created_at REAL,
                         delivered_at REAL)''')
             
-            # Migration for orders table
-            order_columns = [
-                ("pickup_lat", "REAL"),
-                ("pickup_lon", "REAL"),
+            # Migration for orders
+            migration_cols = [
                 ("order_type", "TEXT DEFAULT 'regular'"),
                 ("created_at", "REAL"),
-                ("delivered_at", "REAL")
+                ("delivered_at", "REAL"),
+                ("delivery_lat", "REAL"),
+                ("delivery_lon", "REAL")
             ]
-            for col_name, col_type in order_columns:
+            for col_name, col_type in migration_cols:
                 try:
                     execute_query(conn, f"ALTER TABLE orders ADD COLUMN {col_name} {col_type}")
                 except sqlite3.OperationalError:
@@ -490,13 +641,18 @@ def get_contract_details(user_id, cafe_name):
         conn.close()
 
 def update_contract_payment(user_id, cafe_name, amount):
-    """Subtract amount from balance, track credit meals if balance empty."""
+    """Subtract amount from balance, track credit meals if balance empty. Max 2 credits."""
     conn = get_db_connection()
     try:
         cur = execute_query(conn, "SELECT current_balance, balance_used, credit_meals FROM cafe_contracts WHERE user_id = ? AND cafe_name = ?", (user_id, cafe_name))
         row = cur.fetchone()
         if row:
             curr_bal, used, credit = row
+            
+            # If current balance is already negative and credit is >= 2, fail
+            if curr_bal <= 0 and credit >= 2:
+                return "credit_limit_reached"
+                
             new_bal = curr_bal - amount
             new_used = used + amount
             new_credit = credit
@@ -506,8 +662,8 @@ def update_contract_payment(user_id, cafe_name, amount):
             execute_query(conn, "UPDATE cafe_contracts SET current_balance = ?, balance_used = ?, credit_meals = ? WHERE user_id = ? AND cafe_name = ?", 
                           (new_bal, new_used, new_credit, user_id, cafe_name))
             conn.commit()
-            return True
-        return False
+            return "success"
+        return "no_contract"
     finally:
         conn.close()
 
