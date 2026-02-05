@@ -29,7 +29,7 @@ from menus import MENUS
 load_dotenv()
 
 TOKEN = os.getenv("CREATOR_BOT_TOKEN")
-CREATOR_ID_RAW = os.getenv("CREATOR_ID", "0")
+CREATOR_ID_RAW = os.getenv("CREATOR_ID", "0").split("#")[0].strip()
 try:
     CREATOR_ID = int(CREATOR_ID_RAW)
 except ValueError:
@@ -49,40 +49,25 @@ async def security_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         username = user.username or "No Username"
         full_name = user.full_name or "Unknown Name"
         
-        # Try to find more info from our database
-        db_user = get_user(user_id)
-        # Assuming database columns: user_id, username, name, student_id, block, dorm_number, phone, gender, is_deliverer, balance, tokens, language, is_banned
-        # Phone is usually index 6
-        phone = "Unknown"
-        if db_user:
-            try:
-                # Check for phone column (index 6 typically)
-                phone = db_user[6] if len(db_user) > 6 else "Not in DB"
-            except:
-                phone = "Error fetching"
-        
         # Log the breach
-        logger.warning(f"SECURITY BREACH: {full_name} (@{username}) ID: {user_id} tried to access Creator Bot.")
+        logger.warning(f"SECURITY ALERT: Unauthorized access attempt by {full_name} (@{username}) ID: {user_id}")
         
         # Alert the unauthorized user
         try:
             if not context.user_data.get('breach_alerted'):
-                await update.effective_chat.send_message(
-                    f"🚨 **SECURITY BREACH** 🚨\n\n"
-                    f"Unauthorized access attempt logged for:\n"
-                    f"**Account Name:** {full_name}\n"
-                    f"**Username:** @{username}\n"
-                    f"**Phone:** {phone}\n"
-                    f"**User ID:** `{user_id}`\n\n"
-                    "**SYSTEM ACTION:** You have been blacklisted and reported.",
-                    parse_mode='Markdown'
+                msg = (
+                    f"🛡️ **System Access Restricted**\n\n"
+                    f"Your ID `{user_id}` is not authorized to access the Creator Bot.\n\n"
+                    "**Admin Configuration Required:**\n"
+                    "Please update `CREATOR_ID` in your `.env` file with your ID."
                 )
+                if CREATOR_ID == 0:
+                    msg += "\n\n⚠️ Currently `CREATOR_ID` is set to **0**, which blocks everyone."
+
+                await update.effective_chat.send_message(msg, parse_mode='Markdown')
                 context.user_data['breach_alerted'] = True
-                
-                # Ban the user from the main service
-                ban_user(user_id)
         except Exception as e:
-            logger.error(f"Error handling breach: {e}")
+            logger.error(f"Error handling security alert: {e}")
 
         # STOP all further processing for this update
         raise ApplicationHandlerStop
