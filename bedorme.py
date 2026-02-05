@@ -9,7 +9,8 @@ from menus import MENUS, CONTRACT_MENUS
 from database import (
     init_db, add_user, create_order, get_user, update_order_location,
     get_user_active_orders, set_user_language, get_user_language, get_order,
-    mark_order_complete, save_rating, is_contract_user
+    mark_order_complete, save_rating, is_contract_user, get_contract_details,
+    update_contract_payment
 )
 from translations import get_text
 from telegram.ext import (
@@ -71,13 +72,28 @@ async def admin_seen_user_callback(update: Update, context: ContextTypes.DEFAULT
             account_number = acc_default
 
     # Fetch order to show price
+    is_contract = False
     try:
         # Already imported at top, usage is correct
         p_order = get_order(order_id)
         # Price is typically float or int, at index 5
         price_val = p_order[5] if p_order else "???"
+        if p_order and len(p_order) > 7 and p_order[7] == 'contract':
+            is_contract = True
     except Exception:
         price_val = "???"
+
+    if is_contract:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🎖️ **Contract Order Confirmed**\n\nThe deliverer has seen you. Since this is a contract order, your balance was automatically adjusted. No payment proof is needed. Enjoy your meal!",
+                parse_mode='Markdown'
+            )
+            await query.edit_message_text("Confirmed: Seen receiver. (Contract Order - No payment proof needed)")
+            return
+        except Exception as e:
+            logger.warning(f"Failed to send contract confirmation to user {user_id}: {e}")
 
     # Notify user to start payment process and upload proof
     lang = get_user_language(user_id) or 'en'
@@ -494,7 +510,7 @@ logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 # STATES
 # Add REG_GENDER between REG_BLOCK and REG_DORM to support GC Building flow
 REG_LANGUAGE, REG_NAME, REG_ID, REG_BLOCK, REG_GENDER, REG_DORM, REG_PHONE = range(7)
-ORDER_REST, ORDER_ITEM, ORDER_CONFIRM, ORDER_LOCATION = range(7, 11)
+ORDER_REST, ORDER_TYPE, ORDER_ITEM, ORDER_CONFIRM, ORDER_LOCATION = range(7, 12)
 DEV_WAIT_LOC = 99
 
 # Helper: Haversine Distance
@@ -1375,15 +1391,16 @@ async def admin_accept_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
         admin_name = query.from_user.full_name if query.from_user else "(unknown admin)"
         order_info = f"Order #{order_id}"
         if customer:
-            order_info += (f"\nCustomer: {customer[1]} (tg id: {customer[0]})"
-                           f"\nStudent ID: {customer[2]}"
-                           f"\nBlock/Dorm: {customer[3]} / {customer[4]}"
-                           f"\nPhone: {customer[5]}")
+            order_info += (f"\nCustomer: {customer[2]} (@{customer[1]})"
+                           f"\nStudent ID: {customer[3]}"
+                           f"\nBlock/Dorm: {customer[4]} / {customer[5]}"
+                           f"\nPhone: {customer[6]}")
         if order:
             order_info += (f"\nRestaurant: {order[3]}"
                            f"\nItem: {order[4]}"
                            f"\nPrice: {order[5]} ETB"
-                           f"\nVerification Code: {order[7]}")
+                           f"\nType: {order[7]}"
+                           f"\nVerification Code: {order[8]}")
 
         prompt = (f"Admin {admin_name} has accepted this order. "
                   f"Only {admin_name} should share their live location for this order.\n\n"
@@ -1502,31 +1519,87 @@ async def order_rest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Store clean choice
     context.user_data['restaurant'] = choice
     
-    # Check for contract status
-    is_contract = is_contract_user(update.effective_user.id, choice)
-    context.user_data['is_contract'] = is_contract
-    
-    if is_contract and choice in CONTRACT_MENUS:
-        menu = CONTRACT_MENUS[choice]
-        contract_msg = "\n\n🎖️ **Contract Price Applied**"
-    else:
-        menu = MENUS[choice]
-        contract_msg = ""
-    
+    # Ask for Regular or Contract
+    keyboard = [["Regular", "Contract"]]
+    await update.message.reply_text(
+        "Please choose your order type:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
+    return ORDER_TYPE
+
+async def order_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    choice_type = update.message.text.strip()
+    restaurant = context.user_data.get('restaurant')
+    user_id = update.effective_user.id
     language = context.user_data.get('language', 'en')
 
+    if choice_type == "Contract":
+        # Check registration
+        contract = get_contract_details(user_id, restaurant)
+        if not contract:
+            # Fallback if not registered
+            await update.message.reply_text(
+                "❌ **Not Registered**\n\n"
+                f"You are not registered as a contract user for **{restaurant}**. "
+                "Switching to Regular order type.",
+                parse_mode='Markdown'
+            )
+            context.user_data['is_contract'] = False
+        else:
+            # Check balance and credit
+            paid = contract['total_paid']
+            used = contract['balance_used']
+            remains = contract['current_balance']
+            credit = contract['credit_meals']
+            
+            # Requirement: if no assigned value then create credit value for 2 meals at most
+            if remains <= 0 and credit >= 2:
+                await update.message.reply_text(
+                    "❌ **Credit Limit Reached**\n\n"
+                    "Your balance is empty and you have used your 2-meal credit limit. "
+                    "Please top up or use Regular order type.",
+                    parse_mode='Markdown'
+                )
+                # Show type buttons again or go back to rest?
+                keyboard = [["Regular", "Contract"]]
+                await update.message.reply_text(
+                    "Please choose your order type:",
+                    reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+                )
+                return ORDER_TYPE
+            
+            context.user_data['is_contract'] = True
+            await update.message.reply_text(
+                f"🎖️ **Contract Order - {restaurant}**\n\n"
+                f"💰 Total Paid: {paid} ETB\n"
+                f"📉 Total Used: {used} ETB\n"
+                f"💳 Remaining: {remains} ETB\n"
+                f"🍴 Credit Meals Used: {credit}/2",
+                parse_mode='Markdown'
+            )
+    else:
+        context.user_data['is_contract'] = False
+
+    # Proceed to show items
+    is_contract = context.user_data.get('is_contract', False)
+    if is_contract and restaurant in CONTRACT_MENUS:
+        menu = CONTRACT_MENUS[restaurant]
+        contract_msg = "\n\n🎖️ **Contract Price Applied**"
+    else:
+        menu = MENUS.get(restaurant, {})
+        contract_msg = ""
+    
     # Create menu buttons
     keyboard = []
     for item, price in menu.items():
         keyboard.append([f"{item} - {price} ETB"])
 
     await update.message.reply_text(
-        get_text('choose_item', language).format(restaurant=choice) + contract_msg,
+        get_text('choose_item', language).format(restaurant=restaurant) + contract_msg,
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
         parse_mode='Markdown'
     )
     return ORDER_ITEM
-
 
 async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -1864,6 +1937,9 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pickup_coords = RESTAURANTS.get(details['restaurant'], (None, None))
         pickup_lat, pickup_lon = pickup_coords
 
+        is_contract = context.user_data.get('is_contract', False)
+        order_type = 'contract' if is_contract else 'regular'
+
         order_id = create_order(
             user_id,
             details['restaurant'],
@@ -1873,8 +1949,14 @@ async def order_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lat,
             lon,
             pickup_lat,
-            pickup_lon
+            pickup_lon,
+            order_type=order_type
         )
+
+        # Update balance for contract users
+        if is_contract:
+            restaurant = details['restaurant']
+            update_contract_payment(user_id, restaurant, details['price'])
 
         # Notify admin/channel about new order (if configured)
         try:
@@ -2196,6 +2278,27 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                 for oid in active_orders:
                     update_order_location(oid, lat, lon)
                     print(f"DEBUG: Updated location for Order #{oid} in DB")
+                    
+                    # Notify admin group with details to avoid confusion
+                    last_info_time = context.bot_data.get(f'last_info_update_{oid}', 0)
+                    if time.time() - last_info_time > 20: # throttled to 20s
+                        user = get_user(sender_id)
+                        order = get_order(oid)
+                        deliverer_name = "Not Assigned"
+                        if order and order[2]:
+                            deliverer = get_user(order[2])
+                            deliverer_name = deliverer[2] if deliverer else f"Admin {order[2]}"
+                        
+                        info_msg = (
+                            f"📍 **Live Tracking Update**\n"
+                            f"👤 **Customer:** {user[1] if user else 'Unknown'}\n"
+                            f"📦 **Order:** #{oid} ({order[4] if order else '???'})\n"
+                            f"📞 **Phone:** {user[5] if user else 'N/A'}\n"
+                            f"🚚 **Deliverer:** {deliverer_name}\n"
+                            f"🌐 [View Position](https://www.google.com/maps/search/?api=1&query={lat},{lon})"
+                        )
+                        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=info_msg, parse_mode='Markdown')
+                        context.bot_data[f'last_info_update_{oid}'] = time.time()
             else:
                  # Check if recently completed order exists (linger detection)
                  # We warn if user is sharing location but has no active orders.
@@ -2205,8 +2308,8 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                  if time.time() - last_warn > 300: # Warn every 5 minutes max
                      user = get_user(sender_id)
                      if user:
-                        name = user[1]
-                        phone = user[5] or "N/A"
+                        name = user[2]
+                        phone = user[6] or "N/A"
                         warn_msg = (
                             f"⚠️ **Lingering Live Location Detected**\n"
                             f"User: {name} (ID: {sender_id})\n"
@@ -2620,13 +2723,15 @@ async def user_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TY
             restaurant = order[3]
             items = order[4]
             price = order[5]
-            code = order[7]
+            type_val = order[7]
+            code = order[8]
 
             msg_text = (f"🆕 New Order #{order_id}\n"
-                        f"Customer: {customer[1]} (tg id: {customer[0]})\n"
-                        f"Student ID: {customer[2]}\n"
-                        f"Block/Dorm: {customer[3]} / {customer[4]}\n"
-                        f"Phone: {customer[5]}\n"
+                        f"Type: {type_val}\n"
+                        f"Customer: {customer[2]} (@{customer[1]})\n"
+                        f"Student ID: {customer[3]}\n"
+                        f"Block/Dorm: {customer[4]} / {customer[5]}\n"
+                        f"Phone: {customer[6]}\n"
                         f"Restaurant: {restaurant}\n"
                         f"Item: {items} | Price: {price} ETB\n"
                         f"Verification Code: {code}")
@@ -2693,9 +2798,11 @@ async def user_cancel_purchase_callback(update: Update, context: ContextTypes.DE
                 restaurant = order[3]
                 items = order[4]
                 price = order[5]
-                code = order[7]
+                type_val = order[7]
+                code = order[8]
 
                 msg_text = (f"🆕 New Order #{order_id}\n"
+                            f"Type: {type_val}\n"
                             f"Customer: {customer[1]} (tg id: {customer[0]})\n"
                             f"Student ID: {customer[2]}\n"
                             f"Block/Dorm: {customer[3]} / {customer[4]}\n"
@@ -3040,6 +3147,9 @@ def main():
             ORDER_REST: [
                 MessageHandler(filters.Regex('^Resume Order$|^ትዕዛዝ ቀጥል$'), resume_rest),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, order_rest)
+            ],
+            ORDER_TYPE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, order_type_choice)
             ],
             ORDER_ITEM: [
                 MessageHandler(filters.Regex('^Resume Order$|^ትዕዛዝ ቀጥል$'), resume_item),

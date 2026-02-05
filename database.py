@@ -64,6 +64,7 @@ def init_db():
                         items TEXT,
                         total_price REAL,
                         status TEXT DEFAULT 'pending',
+                        order_type TEXT DEFAULT 'regular',
                         verification_code TEXT,
                         mid_delivery_proof TEXT,
                         proof_timestamp REAL,
@@ -78,6 +79,12 @@ def init_db():
                         phone TEXT, 
                         username TEXT, 
                         full_name TEXT, 
+                        contract_id TEXT,
+                        list_order INTEGER,
+                        total_paid REAL DEFAULT 0,
+                        balance_used REAL DEFAULT 0,
+                        current_balance REAL DEFAULT 0,
+                        credit_meals INTEGER DEFAULT 0,
                         start_date REAL)''')
         else:
             # SQLite syntax
@@ -151,6 +158,7 @@ def init_db():
             order_columns = [
                 ("pickup_lat", "REAL"),
                 ("pickup_lon", "REAL"),
+                ("order_type", "TEXT DEFAULT 'regular'"),
                 ("created_at", "REAL"),
                 ("delivered_at", "REAL")
             ]
@@ -172,6 +180,12 @@ def init_db():
                     phone TEXT, 
                     username TEXT, 
                     full_name TEXT, 
+                    contract_id TEXT,
+                    list_order INTEGER,
+                    total_paid REAL DEFAULT 0,
+                    balance_used REAL DEFAULT 0,
+                    current_balance REAL DEFAULT 0,
+                    credit_meals INTEGER DEFAULT 0,
                     start_date REAL)''')
 
         conn.commit()
@@ -224,13 +238,13 @@ def register_deliverer(user_id):
         conn.close()
 
 
-def create_order(customer_id, restaurant, items, total_price, verification_code, lat=None, lon=None, pickup_lat=None, pickup_lon=None):
+def create_order(customer_id, restaurant, items, total_price, verification_code, lat=None, lon=None, pickup_lat=None, pickup_lon=None, order_type='regular'):
     conn = get_db_connection()
     created_at = time.time()
     try:
         cur = conn.cursor()
-        query = "INSERT INTO orders (customer_id, restaurant, items, total_price, verification_code, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        params = (customer_id, restaurant, items, total_price, verification_code, lat, lon, pickup_lat, pickup_lon, created_at)
+        query = "INSERT INTO orders (customer_id, restaurant, items, total_price, verification_code, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, order_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        params = (customer_id, restaurant, items, total_price, verification_code, lat, lon, pickup_lat, pickup_lon, created_at, order_type)
         
         if DATABASE_URL:
             # Postgres: use %s and RETURNING to get ID
@@ -251,7 +265,10 @@ def create_order(customer_id, restaurant, items, total_price, verification_code,
 def get_pending_orders():
     conn = get_db_connection()
     try:
-        cur = execute_query(conn, "SELECT * FROM orders WHERE status = 'pending'")
+        query = """SELECT order_id, customer_id, deliverer_id, restaurant, items, total_price, status, order_type, verification_code, 
+                   mid_delivery_proof, proof_timestamp, delivery_proof, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at 
+                   FROM orders WHERE status = 'pending'"""
+        cur = execute_query(conn, query)
         orders = cur.fetchall()
         return orders
     finally:
@@ -335,7 +352,12 @@ def get_user_tokens(user_id):
 def get_order(order_id):
     conn = get_db_connection()
     try:
-        cur = execute_query(conn, "SELECT * FROM orders WHERE order_id = ?", (order_id,))
+        # Explicitly define column order to ensure consistent indexing in the UI
+        # 0:order_id, 1:customer_id, 2:deliverer_id, 3:restaurant, 4:items, 5:total_price, 6:status, 7:order_type, 8:verification_code, 9+: proof, lat, lon etc.
+        query = """SELECT order_id, customer_id, deliverer_id, restaurant, items, total_price, status, order_type, verification_code, 
+                   mid_delivery_proof, proof_timestamp, delivery_proof, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at 
+                   FROM orders WHERE order_id = ?"""
+        cur = execute_query(conn, query, (order_id,))
         order = cur.fetchone()
         return order
     finally:
@@ -355,8 +377,10 @@ def get_user(user_id):
 def get_deliverer_active_job(deliverer_id):
     conn = get_db_connection()
     try:
-        cur = execute_query(conn, 
-            "SELECT * FROM orders WHERE deliverer_id = ? AND status = 'accepted'", (deliverer_id,))
+        query = """SELECT order_id, customer_id, deliverer_id, restaurant, items, total_price, status, order_type, verification_code, 
+                   mid_delivery_proof, proof_timestamp, delivery_proof, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at 
+                   FROM orders WHERE deliverer_id = ? AND status = 'accepted'"""
+        cur = execute_query(conn, query, (deliverer_id,))
         order = cur.fetchone()
         return order
     finally:
@@ -423,7 +447,10 @@ def get_full_user_info(user_id):
         cur.execute("SELECT * FROM user_history WHERE user_id = ? ORDER BY change_timestamp DESC", (user_id,))
         history = cur.fetchall()
         
-        cur.execute("SELECT * FROM orders WHERE customer_id = ? OR deliverer_id = ? ORDER BY order_id DESC", (user_id, user_id))
+        query = """SELECT order_id, customer_id, deliverer_id, restaurant, items, total_price, status, order_type, verification_code, 
+                   mid_delivery_proof, proof_timestamp, delivery_proof, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at 
+                   FROM orders WHERE customer_id = ? OR deliverer_id = ? ORDER BY order_id DESC"""
+        cur.execute(query, (user_id, user_id))
         orders = cur.fetchall()
         
         return {
@@ -434,13 +461,53 @@ def get_full_user_info(user_id):
     finally:
         conn.close()
 
-def add_cafe_contract(user_id, cafe_name, phone, username, full_name):
+def add_cafe_contract(user_id, cafe_name, phone, username, full_name, contract_id, list_order, total_paid):
     conn = get_db_connection()
     try:
         start_date = time.time()
-        execute_query(conn, "INSERT INTO cafe_contracts (user_id, cafe_name, phone, username, full_name, start_date) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, cafe_name, phone, username, full_name, start_date))
+        execute_query(conn, """INSERT INTO cafe_contracts 
+                (user_id, cafe_name, phone, username, full_name, contract_id, list_order, total_paid, current_balance, start_date) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, cafe_name, phone, username, full_name, contract_id, list_order, total_paid, total_paid, start_date))
         conn.commit()
+    finally:
+        conn.close()
+
+def get_contract_details(user_id, cafe_name):
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT total_paid, balance_used, current_balance, credit_meals FROM cafe_contracts WHERE user_id = ? AND cafe_name = ?", (user_id, cafe_name))
+        row = cur.fetchone()
+        if row:
+            return {
+                'total_paid': row[0],
+                'balance_used': row[1],
+                'current_balance': row[2],
+                'credit_meals': row[3]
+            }
+        return None
+    finally:
+        conn.close()
+
+def update_contract_payment(user_id, cafe_name, amount):
+    """Subtract amount from balance, track credit meals if balance empty."""
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT current_balance, balance_used, credit_meals FROM cafe_contracts WHERE user_id = ? AND cafe_name = ?", (user_id, cafe_name))
+        row = cur.fetchone()
+        if row:
+            curr_bal, used, credit = row
+            new_bal = curr_bal - amount
+            new_used = used + amount
+            new_credit = credit
+            if curr_bal <= 0:
+                new_credit += 1
+            
+            execute_query(conn, "UPDATE cafe_contracts SET current_balance = ?, balance_used = ?, credit_meals = ? WHERE user_id = ? AND cafe_name = ?", 
+                          (new_bal, new_used, new_credit, user_id, cafe_name))
+            conn.commit()
+            return True
+        return False
     finally:
         conn.close()
 
@@ -449,6 +516,23 @@ def is_contract_user(user_id, cafe_name):
     try:
         cur = execute_query(conn, "SELECT 1 FROM cafe_contracts WHERE user_id = ? AND cafe_name = ?", (user_id, cafe_name))
         return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+def get_all_admins():
+    """List all users who are deliverers."""
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT user_id, username, name, phone FROM users WHERE is_deliverer = 1")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+def set_user_as_admin(user_id, is_admin=1):
+    conn = get_db_connection()
+    try:
+        execute_query(conn, "UPDATE users SET is_deliverer = ? WHERE user_id = ?", (is_admin, user_id))
+        conn.commit()
     finally:
         conn.close()
 
