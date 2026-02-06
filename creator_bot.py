@@ -11,6 +11,7 @@ from telegram.ext import (
     ApplicationHandlerStop, ConversationHandler
 )
 from dotenv import load_dotenv
+from keep_alive import keep_alive, start_pinger
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -43,6 +44,11 @@ async def security_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
+
+    # Allow /my_id for everyone to help debugging
+    if update.message and update.message.text == "/my_id":
+        await update.message.reply_text(f"Your ID: <code>{user.id}</code>", parse_mode='HTML')
+        raise ApplicationHandlerStop
 
     if user.id != CREATOR_ID:
         # Unauthorized access attempt
@@ -779,8 +785,36 @@ def create_creator_app():
 
 def main():
     app = create_creator_app()
-    if app:
-        print("Creator Bot starting...")
+    if not app:
+        print("Error: No Token found for Creator Bot.")
+        return
+
+    # Check for Render environment
+    webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
+    
+    # Custom pinger for the creator bot (provided by user)
+    creator_ping_url = os.environ.get("CREATOR_PING_URL", "https://bedorme-creator.onrender.com")
+
+    if webhook_url:
+        port = int(os.environ.get("PORT", 8080))
+        if webhook_url.endswith("/"):
+            webhook_url = webhook_url[:-1]
+        
+        logging.info(f"Creator Bot: Starting Webhook mode at {webhook_url}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TOKEN,
+            webhook_url=f"{webhook_url}/{TOKEN}"
+        )
+    else:
+        logging.info("Creator Bot: Starting Polling mode.")
+        keep_alive() # Start flask server for Render/UptimeRobot
+        
+        # Start pinger to prevent sleep on free tier
+        if creator_ping_url:
+            start_pinger(creator_ping_url)
+            
         app.run_polling()
 
 if __name__ == "__main__":

@@ -2994,6 +2994,10 @@ async def restart_decision_callback(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("▶️ System resumed. Previous state restored.")
 
 
+async def my_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await update.message.reply_text(f"Your Telegram ID: <code>{user_id}</code>", parse_mode='HTML')
+
 async def post_init(application: Application):
     # Ensure we are not conflicting with any previously set webhook
     try:
@@ -3021,20 +3025,23 @@ async def post_init(application: Application):
         except Exception as e:
             logging.error(f"Failed to send restart prompt: {e}")
 
-    # --- INTEGRATED CREATOR BOT STARTUP ---
-    from creator_bot import create_creator_app
-    creator_app = create_creator_app()
-    if creator_app:
-        try:
-            logging.info("Initializing Creator Bot as background service...")
-            await creator_app.initialize()
-            await creator_app.start()
-            await creator_app.updater.start_polling()
-            application.bot_data['creator_app'] = creator_app
-            logging.info("Creator Bot started successfully.")
-        except Exception as e:
-            logging.error(f"Failed to start Creator Bot: {e}")
-    # --------------------------------------
+    # --- INTEGRATED CREATOR BOT STARTUP (DISABLED FOR SEPARATE HOSTING) ---
+    # To run as a single process, uncomment below. Currently disabled to allow 
+    # the Creator Bot to host on its own instance as requested.
+    
+    # from creator_bot import create_creator_app
+    # creator_app = create_creator_app()
+    # if creator_app:
+    #     try:
+    #         logging.info("Initializing Creator Bot as background service...")
+    #         await creator_app.initialize()
+    #         await creator_app.start()
+    #         await creator_app.updater.start_polling()
+    #         application.bot_data['creator_app'] = creator_app
+    #         logging.info("Creator Bot started successfully.")
+    #     except Exception as e:
+    #         logging.error(f"Failed to start Creator Bot: {e}")
+    # -----------------------------------------------------------------------
 
 
 async def post_shutdown(application: Application):
@@ -3272,6 +3279,8 @@ def main():
     application.add_handler(TypeHandler(Update, edited_location_handler))
 
     # --- Fallback Handler for Unhandled Messages ---
+    application.add_handler(CommandHandler('my_id', my_id_command))
+
     # This catches messages that didn't match any conversation state or command.
     # It likely means the bot restarted and lost state (if persistence failed) or user is sending random text.
     async def global_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3314,16 +3323,6 @@ def main():
     else:
         logging.info("Starting in Polling mode.")
         keep_alive()  # Start the web server to keep the bot alive
-        
-        # Start Creator Bot in a separate thread
-        def run_creator():
-            creator_app = create_creator_app()
-            if creator_app:
-                logging.info("Creator Bot starting...")
-                creator_app.run_polling(close_loop=False)
-        
-        creator_thread = threading.Thread(target=run_creator, daemon=True)
-        creator_thread.start()
         
         application.run_polling()
 

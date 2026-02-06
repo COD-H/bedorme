@@ -24,7 +24,17 @@ def home():
 def run():
     # Bind to the port provided by the hosting env (e.g., Render)
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    try:
+        app.run(host='0.0.0.0', port=port)
+    except Exception as e:
+        logging.error(f"Flask keep-alive server failed to start on port {port}: {e}")
+        # Try a fallback port if 8080 is blocked and we are local
+        if port == 8080:
+             try:
+                 logging.info("Attempting fallback port 8081...")
+                 app.run(host='0.0.0.0', port=8081)
+             except Exception:
+                 logging.error("Fallback failed. Proceeding without keep-alive server.")
 
 def ping_job(url=None):
     if not url:
