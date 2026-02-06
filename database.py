@@ -364,6 +364,11 @@ def init_db():
 
         execute_query(conn, '''CREATE TABLE IF NOT EXISTS system_config
                     (key TEXT PRIMARY KEY, value TEXT)''')
+        
+        conn.commit()
+    finally:
+        conn.close()
+
 def add_user(user_id, username, name, student_id, block, dorm_number, phone, gender=None):
     conn = get_db_connection()
     changes = {}
