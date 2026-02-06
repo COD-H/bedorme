@@ -30,6 +30,8 @@ import random
 import os
 import logging
 import sqlite3
+import threading
+from creator_bot import create_creator_app
 
 # Load environment variables from .env file
 load_dotenv()
@@ -1615,8 +1617,12 @@ async def order_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Create menu buttons
     keyboard = []
+    from database import get_unavailable_items
+    unavailable = get_unavailable_items(restaurant)
+    
     for item, price in menu.items():
-        keyboard.append([f"{item} - {price} ETB"])
+        if item not in unavailable:
+            keyboard.append([f"{item} - {price} ETB"])
 
     await update.message.reply_text(
         get_text('choose_item', language).format(restaurant=restaurant) + contract_msg,
@@ -1639,18 +1645,20 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         current_menu = MENUS.get(restaurant, {})
 
+    from database import get_unavailable_items
+    unavailable = get_unavailable_items(restaurant)
+    available_keyboard = [[f"{item} - {price} ETB"] for item, price in current_menu.items() if item not in unavailable]
+
     if text.startswith('/'):
         await update.message.reply_text(
             "⚠️ Please use the buttons provided. Commands are not allowed during ordering.",
-            reply_markup=ReplyKeyboardMarkup(
-                [[f"{item} - {price} ETB"] for item,
-                    price in current_menu.items()],
-                one_time_keyboard=True, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(available_keyboard, one_time_keyboard=True, resize_keyboard=True)
         )
         return ORDER_ITEM
     if " - " not in text:
         await update.message.reply_text(
             "⚠️ **Unauthorized Access**\n\nFinish the process you started! Please select a food item from the buttons provided.",
+            reply_markup=ReplyKeyboardMarkup(available_keyboard, one_time_keyboard=True, resize_keyboard=True),
             parse_mode='Markdown'
         )
         return ORDER_ITEM
@@ -1662,6 +1670,14 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise ValueError("Invalid format")
             
         item_name = parts[0]
+        
+        if item_name in unavailable:
+             await update.message.reply_text(
+                "😔 Sorry, this item just ran out! Please choose something else:",
+                reply_markup=ReplyKeyboardMarkup(available_keyboard, one_time_keyboard=True, resize_keyboard=True)
+            )
+             return ORDER_ITEM
+
         # Robustly handle price string like "70.0 ETB" or just "70"
         price_str = parts[1].replace(" ETB", "").strip()
         price = float(price_str)
@@ -1669,10 +1685,7 @@ async def order_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Invalid input fallback
         await update.message.reply_text(
             "⚠️ Invalid selection. Please use the buttons provided.",
-            reply_markup=ReplyKeyboardMarkup(
-                [[f"{item} - {price} ETB"] for item,
-                    price in current_menu.items()],
-                one_time_keyboard=True, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(available_keyboard, one_time_keyboard=True, resize_keyboard=True)
         )
         return ORDER_ITEM
 
@@ -3301,6 +3314,17 @@ def main():
     else:
         logging.info("Starting in Polling mode.")
         keep_alive()  # Start the web server to keep the bot alive
+        
+        # Start Creator Bot in a separate thread
+        def run_creator():
+            creator_app = create_creator_app()
+            if creator_app:
+                logging.info("Creator Bot starting...")
+                creator_app.run_polling(close_loop=False)
+        
+        creator_thread = threading.Thread(target=run_creator, daemon=True)
+        creator_thread.start()
+        
         application.run_polling()
 
 

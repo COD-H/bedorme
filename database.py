@@ -99,8 +99,7 @@ def delete_user_completely(user_id):
     susp_conn = get_suspicious_connection()
     try:
         # Get user
-        cur = main_conn.cursor()
-        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        cur = execute_query(main_conn, "SELECT * FROM users WHERE user_id = ?", (user_id,))
         user_row = cur.fetchone()
         
         if user_row:
@@ -110,7 +109,7 @@ def delete_user_completely(user_id):
                         (*user_row, time.time()))
             
             # Backup Orders
-            cur.execute("SELECT order_id, customer_id, restaurant, items, total_price, status, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at FROM orders WHERE customer_id = ?", (user_id,))
+            cur = execute_query(main_conn, "SELECT order_id, customer_id, restaurant, items, total_price, status, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at FROM orders WHERE customer_id = ?", (user_id,))
             orders = cur.fetchall()
             for o in orders:
                 scur.execute("INSERT OR REPLACE INTO deleted_user_orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", o)
@@ -118,10 +117,10 @@ def delete_user_completely(user_id):
             susp_conn.commit()
             
             # 2. Delete from main DB
-            cur.execute("DELETE FROM orders WHERE customer_id = ?", (user_id,))
-            cur.execute("DELETE FROM cafe_contracts WHERE user_id = ?", (user_id,))
-            cur.execute("DELETE FROM user_history WHERE user_id = ?", (user_id,))
-            cur.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            execute_query(main_conn, "DELETE FROM orders WHERE customer_id = ?", (user_id,))
+            execute_query(main_conn, "DELETE FROM cafe_contracts WHERE user_id = ?", (user_id,))
+            execute_query(main_conn, "DELETE FROM user_history WHERE user_id = ?", (user_id,))
+            execute_query(main_conn, "DELETE FROM users WHERE user_id = ?", (user_id,))
             main_conn.commit()
             return True
         return False
@@ -150,10 +149,9 @@ def mark_order_complete(order_id, lat=None, lon=None):
 def get_active_users():
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
         t_limit = time.time() - 7*24*3600
         # Search for users with orders in the last 7 days
-        cur.execute("SELECT * FROM users WHERE user_id IN (SELECT customer_id FROM orders WHERE created_at > ?)", (t_limit,))
+        cur = execute_query(conn, "SELECT * FROM users WHERE user_id IN (SELECT customer_id FROM orders WHERE created_at > ?)", (t_limit,))
         return cur.fetchall()
     finally:
         conn.close()
@@ -161,8 +159,7 @@ def get_active_users():
 def get_contract_users():
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT u.* FROM users u JOIN cafe_contracts c ON u.user_id = c.user_id")
+        cur = execute_query(conn, "SELECT u.* FROM users u JOIN cafe_contracts c ON u.user_id = c.user_id")
         return cur.fetchall()
     finally:
         conn.close()
@@ -170,9 +167,8 @@ def get_contract_users():
 def get_regular_users():
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
         # Not in cafe_contracts
-        cur.execute("SELECT * FROM users WHERE user_id NOT IN (SELECT user_id FROM cafe_contracts)")
+        cur = execute_query(conn, "SELECT * FROM users WHERE user_id NOT IN (SELECT user_id FROM cafe_contracts WHERE user_id IS NOT NULL)")
         return cur.fetchall()
     finally:
         conn.close()
@@ -180,9 +176,8 @@ def get_regular_users():
 def search_users(query):
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
         q = f"%{query}%"
-        cur.execute("SELECT * FROM users WHERE name LIKE ? OR student_id LIKE ? OR phone LIKE ? OR username LIKE ?", (q, q, q, q))
+        cur = execute_query(conn, "SELECT * FROM users WHERE name LIKE ? OR student_id LIKE ? OR phone LIKE ? OR username LIKE ?", (q, q, q, q))
         return cur.fetchall()
     finally:
         conn.close()
@@ -238,6 +233,9 @@ def init_db():
                         current_balance REAL DEFAULT 0,
                         credit_meals INTEGER DEFAULT 0,
                         start_date REAL)''')
+            
+            execute_query(conn, '''CREATE TABLE IF NOT EXISTS unavailable_items
+                        (restaurant TEXT, item TEXT, PRIMARY KEY (restaurant, item))''')
         else:
             # SQLite syntax
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS users
@@ -311,7 +309,9 @@ def init_db():
                 ("created_at", "REAL"),
                 ("delivered_at", "REAL"),
                 ("delivery_lat", "REAL"),
-                ("delivery_lon", "REAL")
+                ("delivery_lon", "REAL"),
+                ("pickup_lat", "REAL"),
+                ("pickup_lon", "REAL")
             ]
             for col_name, col_type in migration_cols:
                 try:
@@ -338,6 +338,9 @@ def init_db():
                     current_balance REAL DEFAULT 0,
                     credit_meals INTEGER DEFAULT 0,
                     start_date REAL)''')
+
+        execute_query(conn, '''CREATE TABLE IF NOT EXISTS unavailable_items
+                    (restaurant TEXT, item TEXT, PRIMARY KEY (restaurant, item))''')
 
         conn.commit()
     finally:
@@ -393,18 +396,16 @@ def create_order(customer_id, restaurant, items, total_price, verification_code,
     conn = get_db_connection()
     created_at = time.time()
     try:
-        cur = conn.cursor()
         query = "INSERT INTO orders (customer_id, restaurant, items, total_price, verification_code, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, order_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         params = (customer_id, restaurant, items, total_price, verification_code, lat, lon, pickup_lat, pickup_lon, created_at, order_type)
         
         if DATABASE_URL:
             # Postgres: use %s and RETURNING to get ID
-            query = query.replace('?', '%s') + " RETURNING order_id"
-            cur.execute(query, params)
+            cur = execute_query(conn, query + " RETURNING order_id", params)
             order_id = cur.fetchone()[0]
         else:
             # SQLite
-            cur.execute(query, params)
+            cur = execute_query(conn, query, params)
             order_id = cur.lastrowid
             
         conn.commit()
@@ -588,20 +589,19 @@ def ban_user(user_id):
 def get_full_user_info(user_id):
     conn = get_db_connection()
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        cur = execute_query(conn, "SELECT * FROM users WHERE user_id = ?", (user_id,))
         user_row = cur.fetchone()
         
         if not user_row:
             return None
             
-        cur.execute("SELECT * FROM user_history WHERE user_id = ? ORDER BY change_timestamp DESC", (user_id,))
+        cur = execute_query(conn, "SELECT * FROM user_history WHERE user_id = ? ORDER BY change_timestamp DESC", (user_id,))
         history = cur.fetchall()
         
         query = """SELECT order_id, customer_id, deliverer_id, restaurant, items, total_price, status, order_type, verification_code, 
                    mid_delivery_proof, proof_timestamp, delivery_proof, delivery_lat, delivery_lon, pickup_lat, pickup_lon, created_at, delivered_at 
                    FROM orders WHERE customer_id = ? OR deliverer_id = ? ORDER BY order_id DESC"""
-        cur.execute(query, (user_id, user_id))
+        cur = execute_query(conn, query, (user_id, user_id))
         orders = cur.fetchall()
         
         return {
@@ -703,6 +703,35 @@ def get_user_by_username(username):
         cur = execute_query(conn, "SELECT user_id FROM users WHERE LOWER(username) = ? OR LOWER(username) = ?", (username, f"@{username}"))
         row = cur.fetchone()
         return row[0] if row else None
+    finally:
+        conn.close()
+
+def toggle_item_availability(restaurant, item):
+    """Toggle whether an item is available. Returns True if now available, False if now unavailable."""
+    conn = get_db_connection()
+    try:
+        cur = execute_query(conn, "SELECT 1 FROM unavailable_items WHERE restaurant = ? AND item = ?", (restaurant, item))
+        if cur.fetchone():
+            execute_query(conn, "DELETE FROM unavailable_items WHERE restaurant = ? AND item = ?", (restaurant, item))
+            conn.commit()
+            return True
+        else:
+            execute_query(conn, "INSERT INTO unavailable_items (restaurant, item) VALUES (?, ?)", (restaurant, item))
+            conn.commit()
+            return False
+    finally:
+        conn.close()
+
+def get_unavailable_items(restaurant=None):
+    """Get list of unavailable items. If restaurant provided, only for that one."""
+    conn = get_db_connection()
+    try:
+        if restaurant:
+            cur = execute_query(conn, "SELECT item FROM unavailable_items WHERE restaurant = ?", (restaurant,))
+            return [r[0] for r in cur.fetchall()]
+        else:
+            cur = execute_query(conn, "SELECT restaurant, item FROM unavailable_items")
+            return cur.fetchall()
     finally:
         conn.close()
 
