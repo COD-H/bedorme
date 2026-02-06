@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # --- Admin Seen User Callback ---
 
 import time
@@ -2131,6 +2132,11 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
             pickup_coords = RESTAURANTS.get(pending_order['restaurant'], (None, None))
             pickup_lat, pickup_lon = pickup_coords
 
+            from database import is_test_mode_active
+            is_test = 1 if is_test_mode_active() else 0
+
+            # Override create_order to support is_test
+            # Since create_order doesn't take is_test yet, we update it immediately after
             order_id = create_order(
                 user_id,
                 pending_order['restaurant'],
@@ -2142,6 +2148,18 @@ async def admin_verify_location_callback(update: Update, context: ContextTypes.D
                 pickup_lat,
                 pickup_lon
             )
+            
+            # Patch for Test Mode
+            if is_test:
+                 from database import execute_query, get_db_connection
+                 temp_conn = get_db_connection()
+                 try:
+                     execute_query(temp_conn, "UPDATE orders SET is_test = 1 WHERE order_id = ?", (order_id,))
+                     temp_conn.commit()
+                     # Optional: Notify admin this is a TEST order
+                     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"🧪 Note: Order #{order_id} marked as TEST data.")
+                 finally:
+                     temp_conn.close()
 
             # Notify admin/channel about new order (if configured)
             try:

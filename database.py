@@ -217,8 +217,26 @@ def init_db():
                         proof_timestamp REAL,
                         delivery_proof TEXT,
                         delivery_lat REAL,
-                        delivery_lon REAL)''')
+                        delivery_lon REAL,
+                        pickup_lat REAL,
+                        pickup_lon REAL,
+                        created_at REAL,
+                        delivered_at REAL,
+                        is_test INTEGER DEFAULT 0)''')
             
+            # --- Check for missing columns (Migrations) ---
+            try:
+                execute_query(conn, "SELECT is_test FROM orders LIMIT 1")
+            except Exception:
+                # Add is_test column if missing
+                print("Migrating DB: Adding is_test column to orders")
+                conn.rollback() # Postgres requires rollback after error
+                try:
+                   execute_query(conn, "ALTER TABLE orders ADD COLUMN is_test INTEGER DEFAULT 0")
+                   conn.commit()
+                except Exception as e:
+                   print(f"Migration failed: {e}")
+
             execute_query(conn, '''CREATE TABLE IF NOT EXISTS cafe_contracts
                         (id SERIAL PRIMARY KEY, 
                         user_id BIGINT, 
@@ -301,7 +319,8 @@ def init_db():
                         delivery_lat REAL,
                         delivery_lon REAL,
                         created_at REAL,
-                        delivered_at REAL)''')
+                        delivered_at REAL,
+                        is_test INTEGER DEFAULT 0)''')
             
             # Migration for orders
             migration_cols = [
@@ -311,7 +330,8 @@ def init_db():
                 ("delivery_lat", "REAL"),
                 ("delivery_lon", "REAL"),
                 ("pickup_lat", "REAL"),
-                ("pickup_lon", "REAL")
+                ("pickup_lon", "REAL"),
+                ("is_test", "INTEGER DEFAULT 0")
             ]
             for col_name, col_type in migration_cols:
                 try:
@@ -342,11 +362,8 @@ def init_db():
         execute_query(conn, '''CREATE TABLE IF NOT EXISTS unavailable_items
                     (restaurant TEXT, item TEXT, PRIMARY KEY (restaurant, item))''')
 
-        conn.commit()
-    finally:
-        conn.close()
-
-
+        execute_query(conn, '''CREATE TABLE IF NOT EXISTS system_config
+                    (key TEXT PRIMARY KEY, value TEXT)''')
 def add_user(user_id, username, name, student_id, block, dorm_number, phone, gender=None):
     conn = get_db_connection()
     changes = {}
@@ -732,6 +749,47 @@ def get_unavailable_items(restaurant=None):
         else:
             cur = execute_query(conn, "SELECT restaurant, item FROM unavailable_items")
             return cur.fetchall()
+    finally:
+        conn.close()
+
+def set_test_mode(enabled: bool):
+    """Sets the system-wide test mode flag."""
+    conn = get_db_connection()
+    try:
+        val = "1" if enabled else "0"
+        conn.cursor().execute("INSERT OR REPLACE INTO system_config (key, value) VALUES ('test_mode', ?)", (val,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def is_test_mode_active():
+    """Checks if test mode is active."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # Handle table missing if not init (rare but possible during migration)
+        try:
+            cur.execute("SELECT value FROM system_config WHERE key = 'test_mode'")
+            row = cur.fetchone()
+            if row and row[0] == "1":
+                return True
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+def clear_stats_data():
+    """Marks all existing completed orders as test data (is_test=1) to reset stats."""
+    conn = get_db_connection()
+    try:
+        # Mark all current orders as test
+        conn.cursor().execute("UPDATE orders SET is_test = 1 WHERE is_test = 0")
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Failed to clear stats: {e}")
+        return False
     finally:
         conn.close()
 

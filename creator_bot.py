@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import logging
 import sqlite3
@@ -252,19 +253,63 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM users")
     user_count = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM orders")
+    
+    # Only count non-test orders
+    cur.execute("SELECT COUNT(*) FROM orders WHERE is_test = 0")
     order_count = cur.fetchone()[0]
-    cur.execute("SELECT SUM(total_price) FROM orders WHERE status = 'complete'")
+    
+    cur.execute("SELECT SUM(total_price) FROM orders WHERE status = 'complete' AND is_test = 0")
     total_rev = cur.fetchone()[0] or 0
     conn.close()
     
+    from database import is_test_mode_active
+    test_mode_status = "🔴 ACTIVE" if is_test_mode_active() else "⚪ Inactive"
+    
     await update.effective_message.reply_text(
-        f"📊 <b>System Stats</b>\n\n"
+        f"📊 <b>System Stats</b>\n"
+        f"<i>(Test data excluded)</i>\n\n"
         f"👥 Users: {user_count}\n"
-        f"📦 Total Orders: {order_count}\n"
-        f"💰 Total Revenue: {total_rev:,.2f} ETB",
+        f"📦 Real Orders: {order_count}\n"
+        f"💰 Real Revenue: {total_rev:,.2f} ETB\n\n"
+        f"🧪 <b>Test Mode:</b> {test_mode_status}\n"
+        f"<i>Use /test to toggle, /clear to reset stats.</i>",
         parse_mode='HTML'
     )
+
+async def test_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from database import is_test_mode_active, set_test_mode
+    
+    current = is_test_mode_active()
+    new_state = not current
+    set_test_mode(new_state)
+    
+    status = "🔴 ENABLED" if new_state else "⚪ DISABLED"
+    await update.effective_message.reply_text(
+        f"🧪 <b>Test Mode {status}</b>\n\n"
+        f"While active, all NEW orders will be marked as 'test' and excluded from /stats.\n"
+        f"<i>Run command again to toggle.</i>",
+        parse_mode='HTML'
+    )
+
+async def clear_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from database import clear_stats_data
+    
+    if not context.args:
+         await update.effective_message.reply_text(
+            "⚠️ <b>Reset Statistics?</b>\n\n"
+            "This will mark ALL existing orders as 'Test Data' so they don't show up in /stats.\n"
+            "This action cannot be easily undone via bot.\n\n"
+            "<b>To confirm, type:</b> <code>/clear confirm</code>",
+            parse_mode='HTML'
+        )
+         return
+
+    if context.args[0].lower() == "confirm":
+        success = clear_stats_data()
+        if success:
+            await update.effective_message.reply_text("✅ <b>Stats Cleared!</b>\nAll valid orders are now marked as test data.")
+        else:
+             await update.effective_message.reply_text("❌ Error clearing stats. Check logs.")
 
 async def user_management_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -730,6 +775,8 @@ def create_creator_app():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("user", user_management_command))
     application.add_handler(CommandHandler("active", list_active_orders_command))
+    application.add_handler(CommandHandler("test", test_mode_command))
+    application.add_handler(CommandHandler("clear", clear_stats_command))
     
     # User Management Callbacks
     application.add_handler(CallbackQueryHandler(user_callback, pattern="^users_"))
