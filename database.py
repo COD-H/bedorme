@@ -339,25 +339,25 @@ def init_db():
                 except sqlite3.OperationalError:
                     pass
 
+            execute_query(conn, '''CREATE TABLE IF NOT EXISTS cafe_contracts
+                        (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                        user_id INTEGER, 
+                        cafe_name TEXT, 
+                        phone TEXT, 
+                        username TEXT, 
+                        full_name TEXT, 
+                        contract_id TEXT, 
+                        list_order INTEGER,
+                        total_paid REAL DEFAULT 0,
+                        balance_used REAL DEFAULT 0,
+                        current_balance REAL DEFAULT 0,
+                        credit_meals INTEGER DEFAULT 0,
+                        start_date REAL)''')
+
         execute_query(conn, '''CREATE TABLE IF NOT EXISTS ratings
                     (order_id INTEGER,
                     rating INTEGER,
                     comment TEXT)''')
-
-        execute_query(conn, '''CREATE TABLE IF NOT EXISTS cafe_contracts
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                    user_id BIGINT, 
-                    cafe_name TEXT, 
-                    phone TEXT, 
-                    username TEXT, 
-                    full_name TEXT, 
-                    contract_id TEXT,
-                    list_order INTEGER,
-                    total_paid REAL DEFAULT 0,
-                    balance_used REAL DEFAULT 0,
-                    current_balance REAL DEFAULT 0,
-                    credit_meals INTEGER DEFAULT 0,
-                    start_date REAL)''')
 
         execute_query(conn, '''CREATE TABLE IF NOT EXISTS unavailable_items
                     (restaurant TEXT, item TEXT, PRIMARY KEY (restaurant, item))''')
