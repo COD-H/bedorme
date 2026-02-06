@@ -25,7 +25,8 @@ from database import (
     add_cafe_contract, get_user_by_username, get_all_admins,
     set_user_as_admin, get_contract_details, update_contract_payment,
     get_active_users, get_contract_users, get_regular_users, search_users,
-    delete_user_completely, toggle_item_availability, get_unavailable_items
+    delete_user_completely, toggle_item_availability, get_unavailable_items,
+    init_db
 )
 from menus import MENUS
 
@@ -831,6 +832,18 @@ def create_creator_app():
     return application
 
 def main():
+    # Attempt to initialize DB (important for standalone local runs or fallback)
+    try:
+        init_db()
+        # Verify connection type
+        from database import DATABASE_URL
+        if DATABASE_URL:
+            logging.info("Creator Bot: Using PostgreSQL Database.")
+        else:
+            logging.warning("Creator Bot: DATABASE_URL not found. Using local SQLite (Data will not sync with Main Bot!).")
+    except Exception as e:
+        logging.error(f"DB Init failed: {e}")
+
     app = create_creator_app()
     if not app:
         print("Error: No Token found for Creator Bot.")
