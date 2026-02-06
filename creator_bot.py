@@ -640,9 +640,40 @@ async def toggle_stock_callback(update: Update, context: ContextTypes.DEFAULT_TY
         
     toggle_item_availability(found_cafe, item_name)
     
-    # Refresh the list - stock_list_callback will call query.answer()
-    query.data = f"stock_list_{found_cafe}"
-    await stock_list_callback(update, context)
+    # Refresh the list manually since query.data is immutable
+    # We call stock_list_callback but trick it by passing the cafe name via context or re-parsing logic
+    # Actually, stock_list_callback expects query.data to start with stock_list_
+    # Since we can't change query.data, we manually construct the logic part of stock_list_callback here
+    
+    await query.answer(f"Toggled {item_name}") # Show small toast
+    
+    # --- LOGIC COPIED FROM stock_list_callback ---
+    # Because we cannot mutate query.data, we must call logic directly
+    from database import get_unavailable_items
+    unavailable = get_unavailable_items()
+    unavailable_set = {(row[0], row[1]) for row in unavailable} # (restaurant, item)
+    
+    cafe_menu = MENUS.get(found_cafe, {})
+    
+    msg = f"🍽️ <b>Manage Stock: {found_cafe}</b>\n\nTap an item to toggle availability:"
+    keyboard = []
+    
+    for category, items in cafe_menu.items():
+        keyboard.append([InlineKeyboardButton(f"--- {category} ---", callback_data="ignore")])
+        for item, price in items.items():
+            is_sold_out = (found_cafe, item) in unavailable_set
+            status_icon = "❌ SOLD OUT" if is_sold_out else "✅ Available"
+            btn_text = f"{item} ({status_icon})"
+            # data length limit is 64 chars
+            # toggle_stock_{cafe}_{item}
+            cb_data = f"toggle_stock_{found_cafe}_{item}"
+            if len(cb_data) > 64:
+                # Should not happen often with short cafe names
+                cb_data = "ignore" 
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=cb_data)])
+            
+    keyboard.append([InlineKeyboardButton("🔙 Back", callback_data=f"cafe_manage_{found_cafe}")])
+    await query.edit_message_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def contract_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
