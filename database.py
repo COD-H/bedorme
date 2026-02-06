@@ -398,7 +398,7 @@ def add_user(user_id, username, name, student_id, block, dorm_number, phone, gen
         else:
             execute_query(conn, "INSERT INTO users (user_id, username, name, student_id, block, dorm_number, phone, gender) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (user_id, username, name, student_id, block, dorm_number, phone, gender))
-
+        
         conn.commit()
         return changes
     finally:
