@@ -2351,13 +2351,16 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                         deliverer_name = "Not Assigned"
                         if order and order[2]:
                             deliverer = get_user(order[2])
-                            deliverer_name = deliverer[2] if deliverer else f"Admin {order[2]}"
+                            if deliverer:
+                                deliverer_name = f"{deliverer[2]} (@{deliverer[1]})"
+                            else:
+                                deliverer_name = f"Admin {order[2]}"
                         
                         info_msg = (
                             f"📍 **Live Tracking Update**\n"
-                            f"👤 **Customer:** {user[1] if user else 'Unknown'} ({order[7].upper() if order else '???'})\n"
-                            f"📦 **Order:** #{oid} ({order[4] if order else '???'})\n"
-                            f"📞 **Phone:** {user[5] if user else 'N/A'}\n"
+                            f"👤 **Customer:** {user[2] if user else 'Unknown'} (@{user[1] if user else '?'})\n"
+                            f"📞 **Phone:** {user[6] if user else 'N/A'}\n"
+                            f"📦 **Order:** #{oid}\n"
                             f"🚚 **Deliverer:** {deliverer_name}\n"
                             f"🌐 [View Position](https://www.google.com/maps/search/?api=1&query={lat},{lon})"
                         )
