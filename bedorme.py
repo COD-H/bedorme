@@ -2364,7 +2364,21 @@ async def relay_location_updates(update: Update, context: ContextTypes.DEFAULT_T
                             f"🚚 **Deliverer:** {deliverer_name}\n"
                             f"🌐 [View Position](https://www.google.com/maps/search/?api=1&query={lat},{lon})"
                         )
-                        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=info_msg, parse_mode='Markdown')
+                        # Try to edit the existing status message instead of spamming new ones
+                        info_id_key = f'last_info_msg_id_{oid}'
+                        last_msg_id = context.bot_data.get(info_id_key)
+
+                        if last_msg_id:
+                            try:
+                                await context.bot.edit_message_text(chat_id=ADMIN_CHAT_ID, message_id=last_msg_id, text=info_msg, parse_mode='Markdown')
+                            except Exception:
+                                # If edit fails (e.g. deleted), send new
+                                sent = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=info_msg, parse_mode='Markdown')
+                                context.bot_data[info_id_key] = sent.message_id
+                        else:
+                            sent = await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=info_msg, parse_mode='Markdown')
+                            context.bot_data[info_id_key] = sent.message_id
+                        
                         context.bot_data[f'last_info_update_{oid}'] = time.time()
             else:
                  # Check if recently completed order exists (linger detection)
