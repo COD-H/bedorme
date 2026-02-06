@@ -2779,6 +2779,7 @@ async def user_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TY
             # 1. Fetch Data to reconstruct message
             order = get_order(order_id)
             if not order:
+                await query.edit_message_text("❌ Error: Order data not found (Session Expired). The server may have restarted. Please check with the deliverer directly or re-order.")
                 return
 
             customer_id = order[1]
@@ -3305,13 +3306,22 @@ def main():
         if not update.message:
             return
 
+        text = update.message.text
         # Ignore commands (they are usually handled or ignored silently)
-        if update.message.text and update.message.text.startswith('/'):
+        if text and text.startswith('/'):
             return
         
         user_id = update.effective_user.id
         from database import get_user_language
         lang = get_user_language(user_id) or 'en'
+
+        # Check for specific "Lost Button" patterns to give better feedback
+        if text and ("Cancel Order" in text or "Confirm" in text or "ትዕዛዝ" in text or "አረጋግጥ" in text):
+             await update.message.reply_text(
+                "⚠️ **Session Lost**\n\nThe button you pressed belongs to an expired session (due to server update/restart). Your previous cart is empty.\n\nPlease type /order to start a fresh order.\n\n(English/Amharic)",
+                parse_mode='Markdown'
+             )
+             return
 
         await update.message.reply_text(
             get_text('server_restart', lang),
