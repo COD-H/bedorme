@@ -3041,6 +3041,15 @@ async def post_init(application: Application):
     except Exception as e:
         logging.warning(f"delete_webhook failed or not needed: {e}")
 
+    # Check database connectivity
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        conn.close()
+        logging.info("Database connection verified.")
+    except Exception as e:
+        logging.error(f"Failed to connect to database on startup: {e}")
+
     # Check if we have resumed state (bot_data is not empty)
     # We check specific keys that indicate active state
     if application.bot_data.get('admin_orders') or application.bot_data.get('admin_live'):
@@ -3359,6 +3368,9 @@ def main():
 
         logging.info(f"Starting in Webhook mode. URL: {webhook_url}, Port: {port}")
         
+        # Start pinger thread even in webhook mode to prevent sleeping
+        start_pinger()
+
         application.run_webhook(
             listen="0.0.0.0",
             port=port,

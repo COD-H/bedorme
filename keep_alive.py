@@ -36,21 +36,35 @@ def run():
              except Exception:
                  logging.error("Fallback failed. Proceeding without keep-alive server.")
 
-def ping_job(url=None):
-    if not url:
+def ping_job(urls=None):
+    if not urls:
         # Load from env or fallback
-        url = os.environ.get("PING_URL", "https://bedorme-ydk8.onrender.com")
+        primary = os.environ.get("PING_URL", "https://bedorme-ydk8.onrender.com")
+        creator = os.environ.get("CREATOR_PING_URL", "https://bedorme-creator.onrender.com")
+        urls = [primary, creator]
         
     while True:
         try:
-            logging.info(f"Pinging {url}...")
-            requests.get(url, timeout=10)
-        except Exception as e:
-            logging.error(f"Ping failed: {e}")
-        time.sleep(7 * 60) # 7 minutes
+            # Refresh list from env in case it changes
+            if not urls or (len(urls) == 2 and urls[0] == "https://bedorme-ydk8.onrender.com"):
+                 primary = os.environ.get("PING_URL", "https://bedorme-ydk8.onrender.com")
+                 creator = os.environ.get("CREATOR_PING_URL", "https://bedorme-creator.onrender.com")
+                 urls = [primary, creator]
 
-def start_pinger(url=None):
-    p = Thread(target=ping_job, args=(url,))
+            for url in urls:
+                if not url: continue
+                try:
+                    logging.info(f"Pinging {url}...")
+                    requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) KeepAlive/1.0"})
+                except Exception as e:
+                    logging.error(f"Ping failed for {url}: {e}")
+        except Exception as outer_e:
+              logging.error(f"Ping loop error: {outer_e}")
+              
+        time.sleep(4 * 60) # 4 minutes just to be safe (Render sleeps after 15m inactivity)
+
+def start_pinger(urls=None):
+    p = Thread(target=ping_job, args=(urls,))
     p.daemon = True
     p.start()
 
